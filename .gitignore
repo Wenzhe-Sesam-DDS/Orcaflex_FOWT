@@ -1,0 +1,16 @@
+# Virtual environment
+.venv/
+venv/
+env/
+
+# Python cache
+__pycache__/
+*.py[cod]
+*.pyo
+
+# OrcaFlex simulation outputs (large binary files — remove this line if you want to track them)
+*.sim
+
+# OS files
+.DS_Store
+Thumbs.db

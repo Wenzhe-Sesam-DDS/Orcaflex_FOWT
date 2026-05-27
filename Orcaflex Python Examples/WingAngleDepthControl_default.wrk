@@ -1,0 +1,53 @@
+﻿[OrcaFlex Workspace]
+LengthUnits=m
+TileMode=TileHorizontal
+
+[3]
+FormType=Graph
+Minimized=False
+ResultType=TimeHistory
+Period=WholeSimulation
+
+[3_Yaxis]
+ObjectType=6D Buoy
+ObjectName=Towfish
+VarName=Wing Gamma
+PositionX=0
+PositionY=0
+PositionZ=0
+WingName=Wing (starboard)
+
+[2]
+FormType=Graph
+Minimized=False
+ResultType=TimeHistory
+Period=WholeSimulation
+
+[2_Yaxis]
+ObjectType=6D Buoy
+ObjectName=Towfish
+VarName=Z
+PositionX=0
+PositionY=0
+PositionZ=0
+WingName=Wing (starboard)
+
+[1]
+FormType=Graph
+Minimized=False
+ResultType=TimeHistory
+Period=WholeSimulation
+
+[1_Yaxis]
+ObjectType=6D Buoy
+ObjectName=Towfish
+VarName=Rotation 2
+PositionX=0
+PositionY=0
+PositionZ=0
+WingName=Tail Fin (upper)
+
+[0]
+FormType=View
+Minimized=False
+

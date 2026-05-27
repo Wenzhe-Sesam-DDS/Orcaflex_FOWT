@@ -1,0 +1,58 @@
+﻿[OrcaFlex Workspace]
+LengthUnits=m
+TileMode=TileHorizontal
+
+[3]
+FormType=Graph
+Minimized=False
+ResultType=TimeHistory
+Period=WholeSimulation
+
+[3_Yaxis]
+ObjectType=Environment Data
+ObjectName=Environment
+VarName=Current Speed
+PositionX=0
+PositionY=0
+PositionZ=0
+
+[2]
+FormType=Graph
+Minimized=False
+ResultType=TimeHistory
+Period=WholeSimulation
+
+[2_Yaxis]
+ObjectType=Environment Data
+ObjectName=Environment
+VarName=Current Direction
+PositionX=0
+PositionY=0
+PositionZ=0
+
+[1]
+FormType=Graph
+Minimized=False
+ResultType=TimeHistory
+Period=WholeSimulation
+
+[1_Yaxis]
+ObjectType=Environment Data
+ObjectName=Environment
+VarName=Wind Speed
+PositionX=0
+PositionY=0
+PositionZ=0
+
+[0]
+FormType=View
+Minimized=False
+CentreX=4.45223446240744
+CentreY=0
+CentreZ=-7.03703376514618
+Azimuth=270
+Elevation=0
+Gamma=0
+Size=106.474668207718
+Shaded=False
+
