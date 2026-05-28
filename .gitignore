@@ -6,6 +6,12 @@ __pycache__/
 # OrcaFlex simulation results — too large for GitHub (use local storage)
 *.sim
 
+# Generated outputs — recreated on every run, no need to version-control
+results_report.txt
+fig1_platform_motions.png
+fig2_mooring_tension.png
+fig3_cable_tension_curvature.png
+
 # C extensions
 *.so
 
