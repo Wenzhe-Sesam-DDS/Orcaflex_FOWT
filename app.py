@@ -1,33 +1,41 @@
 """
 OrcaFlex FOWT Analysis — Streamlit GUI
 =======================================
-Wraps workflow_01_build.py → workflow_02_run.py → workflow_03_results.py.
+Drives workflow_01_build → workflow_02_run → workflow_03_results in-process.
 
 Design notes
 ------------
-• No files on disk are mutated to pass parameters. Every GUI input is
-  forwarded to the workflow scripts as a `GUI_<KEY>` environment variable,
-  and the workflows read those via `_env(...)` with project_config.GUI_DEFAULTS
-  as the fallback. A Streamlit crash mid-run can never leave a corrupted
-  project_config.py behind.
+• All workflow scripts expose a Python function (build / run / post_process);
+  the GUI calls them directly inside the Streamlit process. No subprocesses,
+  no environment variables, no on-disk mutation of project_config.py.
+  → first-step progress is updated *between* phases, not all at once.
+  → no per-call Python startup + OrcFxAPI DLL load overhead.
 
-• To ADD a new input parameter:
+• Output caching: every parameter set hashes to a unique sub-directory under
+  ./runs/. Re-running with the same parameters reuses the cached artefacts.
+
+• To add a new input parameter:
     1. Add a default in project_config.GUI_DEFAULTS.
     2. Add a widget below using `value=D["<key>"]`.
-    3. Add the GUI_<KEY> entry in build_env() and the `_env()` read in the
-       relevant workflow script.
+    3. Add the key to the `params` dict in the run block.
+    4. Read it inside the relevant workflow function — that's it.
 """
 
+import io
 import math
 import os
-import subprocess
-import sys
+from contextlib import redirect_stdout
 
 import streamlit as st
 
-from project_config import GUI_DEFAULTS as D
+from project_config import GUI_DEFAULTS as D, MOORING_HEADINGS, params_hash
+from workflow_01_build  import build
+from workflow_02_run    import run as run_sims
+from workflow_03_results import post_process
 
-HERE = os.path.dirname(os.path.abspath(__file__))
+HERE     = os.path.dirname(os.path.abspath(__file__))
+RUNS_DIR = os.path.join(HERE, "runs")
+
 
 # ── Page config ───────────────────────────────────────────────────────────────
 st.set_page_config(
@@ -38,6 +46,7 @@ st.set_page_config(
 
 st.title("🌊 OrcaFlex FOWT Analysis")
 st.caption("Semi-submersible platform · Catenary mooring · Lazy-wave export cable")
+
 
 # ═════════════════════════════════════════════════════════════════════════════
 # SIDEBAR — all input parameters grouped by category
@@ -53,29 +62,24 @@ with st.sidebar:
         icon="⚠️",
     )
 
-    # ── Site ──────────────────────────────────────────────────────────────────
     with st.expander("🏔️ Site", expanded=True):
         water_depth = st.number_input(
             "Water Depth (m)", value=D["water_depth"], min_value=50.0, max_value=3000.0, step=10.0
         )
 
-    # ── Sea State ─────────────────────────────────────────────────────────────
     with st.expander("🌊 Sea State (ULS / 50-yr)", expanded=True):
         wave_hs        = st.number_input("Hs — Significant Wave Height (m)",  value=D["wave_hs"],        min_value=0.5,   max_value=25.0,  step=0.5)
         wave_tp        = st.number_input("Tp — Spectral Peak Period (s)",     value=D["wave_tp"],        min_value=3.0,   max_value=30.0,  step=0.5)
         wave_direction = st.number_input("Wave Direction (deg)",              value=D["wave_direction"], min_value=0.0,   max_value=360.0, step=15.0)
 
-    # ── Wind ──────────────────────────────────────────────────────────────────
     with st.expander("💨 Wind"):
         wind_speed     = st.number_input("Wind Speed — 10-min mean (m/s)",   value=D["wind_speed"],     min_value=0.0, max_value=70.0,  step=1.0)
         wind_direction = st.number_input("Wind Direction (deg)",             value=D["wind_direction"], min_value=0.0, max_value=360.0, step=15.0)
 
-    # ── Current ───────────────────────────────────────────────────────────────
     with st.expander("🌀 Current"):
         current_speed = st.number_input("Current Speed — surface (m/s)",    value=D["current_speed"], min_value=0.0, max_value=5.0,   step=0.1)
         current_dir   = st.number_input("Current Direction (deg)",          value=D["current_dir"],   min_value=0.0, max_value=360.0, step=15.0)
 
-    # ── Mooring ───────────────────────────────────────────────────────────────
     with st.expander("⚓ Mooring System"):
         mooring_mbl    = st.number_input("MBL — Min. Breaking Load (kN)",   value=D["mooring_mbl"],     min_value=1000.0, max_value=50000.0, step=100.0)
         fairlead_radius= st.number_input("Fairlead Radius (m)",             value=D["fairlead_radius"], min_value=10.0,   max_value=100.0,   step=1.0)
@@ -83,10 +87,9 @@ with st.sidebar:
         anchor_radius  = st.number_input("Anchor Radius (m)",               value=D["anchor_radius"],   min_value=100.0,  max_value=2000.0,  step=10.0)
         mooring_length = st.number_input("Chain Length per Leg (m)",        value=D["mooring_length"],  min_value=100.0,  max_value=3000.0,  step=10.0)
         st.caption("Per-line orientation & statics")
-        _m_tabs = st.tabs(["Mooring 1 (0°)", "Mooring 2 (120°)", "Mooring 3 (240°)"])
-        _m_headings = [0.0, 120.0, 240.0]
+        _m_tabs = st.tabs([f"Mooring {i+1} ({h:.0f}°)" for i, h in enumerate(MOORING_HEADINGS)])
         mooring_per_line = []
-        for _mi, (_tab, _hdg) in enumerate(zip(_m_tabs, _m_headings), start=1):
+        for _mi, (_tab, _hdg) in enumerate(zip(_m_tabs, MOORING_HEADINGS), start=1):
             with _tab:
                 st.caption("End A (fairlead) orientation")
                 _enda_az  = st.number_input("End A Azimuth (deg)",     value=_hdg,                          min_value=0.0,    max_value=360.0, step=15.0, key=f"m{_mi}_enda_az")
@@ -109,7 +112,6 @@ with st.sidebar:
                     lay_azimuth=_lay_az, as_laid_tension=_as_laid,
                 ))
 
-    # ── Dynamic Cable ─────────────────────────────────────────────────────────
     with st.expander("🔌 Dynamic Export Cable"):
         cable_mbr      = st.number_input("MBR — Min. Allowable Bend Radius (m)", value=D["cable_mbr"],        min_value=0.5,     max_value=10.0,   step=0.1)
         cable_hangoff_x= st.number_input("Hang-off X (m)",                       value=D["cable_hangoff_x"],  min_value=-200.0,  max_value=0.0,    step=5.0)
@@ -131,13 +133,18 @@ with st.sidebar:
         cable_as_laid_tension = st.number_input("As-Laid Tension (kN)",    value=D["cable_as_laid_tension"],   min_value=0.0,    max_value=5000.0, step=10.0, key="cab_as_laid",
                                                 help="0 = OrcaFlex calculates from geometry")
 
-    # ── Analysis ──────────────────────────────────────────────────────────────
     with st.expander("⏱️ Analysis Durations"):
         buildup_duration  = st.number_input("Build-up Duration (s)",        value=D["buildup_duration"],  min_value=10.0,  max_value=300.0,  step=10.0)
         analysis_duration = st.number_input("Analysis Duration (s)",        value=D["analysis_duration"], min_value=600.0, max_value=10800.0,step=600.0,
                                             help="1 h = 3600 s for ULS; use ≥ 10800 s (3 h) for fatigue")
 
-    # ── Post-processing ───────────────────────────────────────────────────────
+    with st.expander("🎲 Random Seeds"):
+        wave_seed = st.number_input("Base Wave Seed",     value=int(D["wave_seed"]), min_value=1, max_value=10**9, step=1)
+        n_seeds   = st.number_input("Number of Seeds",    value=int(D["n_seeds"]),   min_value=1, max_value=10,    step=1,
+                                    help="Run N independent simulations (seed_i = base + i). "
+                                         "Extreme stats are aggregated; plots use seed 0. "
+                                         "N ≥ 3 recommended for stable MPM estimates.")
+
     with st.expander("📈 Post-Processing"):
         storm_hours = st.number_input("Storm Duration (h) — extreme stats", value=int(D["storm_hours"]), min_value=1, max_value=24,  step=1)
         risk_pct    = st.number_input("Risk Factor (%) — extreme query",    value=int(D["risk_pct"]),    min_value=1, max_value=50,  step=1)
@@ -149,132 +156,129 @@ with st.sidebar:
 
 
 # ═════════════════════════════════════════════════════════════════════════════
-# VALIDATION — catch impossible / dangerous parameter combinations early
+# VALIDATION
 # ═════════════════════════════════════════════════════════════════════════════
+def validate(params: dict) -> tuple[list[str], list[str]]:
+    """Return (errors, warnings)."""
+    errs:  list[str] = []
+    warns: list[str] = []
 
-def validate(params: dict) -> list[str]:
-    """Return a list of human-readable error messages (empty list = OK)."""
-    errs = []
-
-    # Geometric feasibility of the mooring catenary: chain must be longer than
-    # the straight-line distance from fairlead to anchor.
+    # Geometric feasibility of the mooring catenary
     horiz = params["anchor_radius"] - params["fairlead_radius"]
-    vert  = params["water_depth"] + params["fairlead_depth"]   # fairlead_depth is negative
+    vert  = params["water_depth"] + params["fairlead_depth"]
     straight = math.hypot(horiz, vert)
     if params["mooring_length"] < straight:
         errs.append(
-            f"Chain length per leg ({params['mooring_length']:.0f} m) is shorter "
-            f"than the straight-line fairlead→anchor distance ({straight:.0f} m). "
-            f"Increase chain length or reduce anchor radius."
+            f"Chain length per leg ({params['mooring_length']:.0f} m) is shorter than "
+            f"the straight-line fairlead→anchor distance ({straight:.0f} m)."
         )
 
-    # Build-up should cover at least one wave period.
-    if params["buildup_duration"] < params["wave_tp"]:
+    if params["buildup_duration"] < 2 * params["wave_tp"]:
         errs.append(
-            f"Build-up duration ({params['buildup_duration']:.0f} s) is shorter "
-            f"than the wave period Tp ({params['wave_tp']:.1f} s). "
-            f"Use at least 2 × Tp to let the ramp settle."
+            f"Build-up ({params['buildup_duration']:.0f} s) < 2·Tp "
+            f"({2*params['wave_tp']:.1f} s) — ramp won't settle."
         )
 
-    # Cable hang-off must be above the seabed.
     if params["cable_hangoff_z"] < -params["water_depth"]:
-        errs.append(
-            f"Cable hang-off Z ({params['cable_hangoff_z']:.1f} m) is below the "
-            f"seabed (−{params['water_depth']:.0f} m)."
-        )
+        errs.append("Cable hang-off Z is below the seabed.")
 
-    # Fairlead must be above the seabed.
     if params["fairlead_depth"] < -params["water_depth"]:
-        errs.append(
-            f"Fairlead depth ({params['fairlead_depth']:.1f} m) is below the "
-            f"seabed (−{params['water_depth']:.0f} m)."
+        errs.append("Fairlead depth is below the seabed.")
+
+    # Hs / Tp wave-steepness sanity (deep-water JONSWAP: 1.6√Hs ≤ Tp ≤ 6√Hs)
+    tp_min = 1.6 * math.sqrt(params["wave_hs"])
+    tp_max = 6.0 * math.sqrt(params["wave_hs"])
+    if params["wave_tp"] < tp_min:
+        warns.append(
+            f"Tp ({params['wave_tp']:.1f} s) < 1.6·√Hs ({tp_min:.1f} s): "
+            f"wave is steep — may break in deep water."
+        )
+    elif params["wave_tp"] > tp_max:
+        warns.append(
+            f"Tp ({params['wave_tp']:.1f} s) > 6·√Hs ({tp_max:.1f} s): swell-like, "
+            f"unusual for a ULS design sea-state."
         )
 
-    return errs
+    # Analysis duration vs storm window for extreme stats
+    if params["analysis_duration"] < 1800.0:
+        warns.append(
+            f"Analysis duration ({params['analysis_duration']:.0f} s) < 30 min — "
+            f"Rayleigh MPM extreme-stats estimates will be noisy; increase to ≥3 h "
+            f"or use more seeds."
+        )
+
+    if params["n_seeds"] < 3:
+        warns.append(
+            f"n_seeds = {int(params['n_seeds'])}. "
+            f"3–5 seeds recommended for stable extreme-value statistics."
+        )
+
+    # Environmental direction sanity
+    spread = max(params["wave_direction"], params["wind_direction"], params["current_dir"]) \
+           - min(params["wave_direction"], params["wind_direction"], params["current_dir"])
+    if spread > 90.0:
+        warns.append(
+            f"Wave / wind / current directions span {spread:.0f}°. "
+            f"Verify this matches your design metocean condition."
+        )
+
+    return errs, warns
 
 
 # ═════════════════════════════════════════════════════════════════════════════
-# RUNNER — build env vars and call the three workflow scripts as subprocesses
+# RUNNER
 # ═════════════════════════════════════════════════════════════════════════════
+def execute(params: dict, status, progress_bar, log_box):
+    """Run the full pipeline. Streams stdout incrementally to log_box."""
+    cache_id = params_hash(params)
+    out_dir  = os.path.join(RUNS_DIR, cache_id)
 
-def build_env(params: dict) -> dict:
-    """Translate the GUI params dict into a child-process environment."""
-    env = os.environ.copy()
-    env.update({
-        # Project-wide (also live in project_config.py)
-        "GUI_WATER_DEPTH":          str(params["water_depth"]),
-        "GUI_MOORING_MBL":          str(params["mooring_mbl"]),
-        "GUI_CABLE_MBR":            str(params["cable_mbr"]),
-        "GUI_BUILDUP_DURATION":     str(params["buildup_duration"]),
-        "GUI_ANALYSIS_DURATION":    str(params["analysis_duration"]),
+    expected = ["results_report.txt",
+                "fig1_platform_motions.png",
+                "fig2_mooring_tension.png",
+                "fig3_cable_tension_curvature.png"]
+    if all(os.path.exists(os.path.join(out_dir, f)) for f in expected):
+        status.write(f"♻️  Cache hit — reusing `runs/{cache_id}/`")
+        progress_bar.progress(100, text="Done (cached)")
+        return out_dir, f"Cache hit: runs/{cache_id}/\n"
 
-        # Environment
-        "GUI_WAVE_HS":              str(params["wave_hs"]),
-        "GUI_WAVE_TP":              str(params["wave_tp"]),
-        "GUI_WAVE_DIRECTION":       str(params["wave_direction"]),
-        "GUI_WIND_SPEED":           str(params["wind_speed"]),
-        "GUI_WIND_DIRECTION":       str(params["wind_direction"]),
-        "GUI_CURRENT_SPEED":        str(params["current_speed"]),
-        "GUI_CURRENT_DIR":          str(params["current_dir"]),
+    os.makedirs(out_dir, exist_ok=True)
+    buf = io.StringIO()
 
-        # Mooring geometry (shared)
-        "GUI_FAIRLEAD_RADIUS":      str(params["fairlead_radius"]),
-        "GUI_FAIRLEAD_DEPTH":       str(params["fairlead_depth"]),
-        "GUI_ANCHOR_RADIUS":        str(params["anchor_radius"]),
-        "GUI_MOORING_LENGTH":       str(params["mooring_length"]),
+    def _flush_log():
+        log_box.code(buf.getvalue() or "(no output yet)", language="bash")
 
-        # Cable geometry & orientation
-        "GUI_CABLE_HANGOFF_X":          str(params["cable_hangoff_x"]),
-        "GUI_CABLE_HANGOFF_Z":          str(params["cable_hangoff_z"]),
-        "GUI_CABLE_SEABED_X":           str(params["cable_seabed_x"]),
-        "GUI_CABLE_ENDA_AZIMUTH":       str(params["cable_enda_azimuth"]),
-        "GUI_CABLE_ENDA_DECLINATION":   str(params["cable_enda_declination"]),
-        "GUI_CABLE_ENDA_GAMMA":         str(params["cable_enda_gamma"]),
-        "GUI_CABLE_ENDB_AZIMUTH":       str(params["cable_endb_azimuth"]),
-        "GUI_CABLE_ENDB_DECLINATION":   str(params["cable_endb_declination"]),
-        "GUI_CABLE_ENDB_GAMMA":         str(params["cable_endb_gamma"]),
-        "GUI_CABLE_LAY_AZIMUTH":        str(params["cable_lay_azimuth"]),
-        "GUI_CABLE_AS_LAID_TENSION":    str(params["cable_as_laid_tension"]),
+    with redirect_stdout(buf):
+        # Step 1
+        status.write("Step 1/3 — Building model…")
+        progress_bar.progress(10, text="Step 1/3 — Building model…")
+        model = build(params)
+        _flush_log()
 
-        # Post-processing
-        "GUI_STORM_HOURS":          str(params["storm_hours"]),
-        "GUI_RISK_PCT":             str(params["risk_pct"]),
-        "GUI_PERIOD":               str(params["period"]),
-    })
+        # Step 2
+        n = int(params["n_seeds"])
+        status.write(f"Step 2/3 — Running {n} simulation(s)…")
+        progress_bar.progress(35, text=f"Step 2/3 — Running {n} simulation(s)…")
+        sim_paths = run_sims(params, out_dir=out_dir, model=model)
+        _flush_log()
 
-    # Per-line mooring orientation & statics (8 keys × 3 lines)
-    env.update({
-        f"GUI_MOORING{i+1}_{k.upper()}": str(params["mooring_per_line"][i][k])
-        for i in range(3)
-        for k in ["enda_azimuth", "enda_declination", "enda_gamma",
-                  "endb_azimuth", "endb_declination", "endb_gamma",
-                  "lay_azimuth", "as_laid_tension"]
-    })
-    return env
+        # Step 3
+        status.write("Step 3/3 — Post-processing…")
+        progress_bar.progress(80, text="Step 3/3 — Post-processing…")
+        post_process(sim_paths, params, out_dir=out_dir)
+        _flush_log()
 
-
-def run_workflow(params: dict) -> tuple[bool, str]:
-    """Run the three workflow scripts sequentially. Returns (success, log)."""
-    env = build_env(params)
-    log_lines = []
-    for step, script in enumerate(
-        ["workflow_01_build.py", "workflow_02_run.py", "workflow_03_results.py"], 1
-    ):
-        log_lines.append(f"\n{'─'*50}\nStep {step}: {script}\n{'─'*50}")
-        result = subprocess.run(
-            [sys.executable, os.path.join(HERE, script)],
-            capture_output=True, text=True, env=env, cwd=HERE
-        )
-        log_lines.append(result.stdout)
-        if result.returncode != 0:
-            log_lines.append(f"ERROR:\n{result.stderr}")
-            return False, "\n".join(log_lines)
-    return True, "\n".join(log_lines)
+    progress_bar.progress(100, text="Done!")
+    return out_dir, buf.getvalue()
 
 
 # ═════════════════════════════════════════════════════════════════════════════
 # MAIN AREA — run + results
 # ═════════════════════════════════════════════════════════════════════════════
+if "out_dir" not in st.session_state:
+    st.session_state.out_dir = None
+if "analysis_log" not in st.session_state:
+    st.session_state.analysis_log = ""
 
 if run_btn:
     params = dict(
@@ -298,74 +302,89 @@ if run_btn:
         cable_as_laid_tension=cable_as_laid_tension,
         buildup_duration=buildup_duration, analysis_duration=analysis_duration,
         storm_hours=storm_hours, risk_pct=risk_pct, period=period,
+        wave_seed=int(wave_seed), n_seeds=int(n_seeds),
     )
 
-    # ── Pre-flight validation ────────────────────────────────────────────────
-    issues = validate(params)
-    if issues:
-        st.error("Please fix the following input issues before running:")
-        for msg in issues:
-            st.markdown(f"- {msg}")
+    errors, warnings = validate(params)
+    if errors:
+        st.error("Please fix the following input errors before running:")
+        for m in errors:
+            st.markdown(f"- {m}")
         st.stop()
+    for w in warnings:
+        st.warning(w, icon="⚠️")
 
-    progress = st.progress(0, text="Starting…")
+    progress_bar = st.empty()
+    progress_bar.progress(0, text="Starting…")
 
     with st.status("Running OrcaFlex analysis…", expanded=True) as status:
-        st.write("Step 1/3 — Building model…")
-        progress.progress(10, text="Step 1/3 — Building model…")
+        log_box = st.empty()
+        try:
+            out_dir, log = execute(params, status, progress_bar, log_box)
+            st.session_state.out_dir = out_dir
+            st.session_state.analysis_log = log
+            # Clear the in-progress log; the full log is in the "🖥️ Console
+            # Log" expander below so we don't duplicate it here.
+            log_box.empty()
+            status.update(label="✅ Analysis complete!",
+                          state="complete", expanded=False)
+        except Exception as exc:
+            st.session_state.out_dir = None
+            st.session_state.analysis_log = f"ERROR: {exc}"
+            status.update(label=f"❌ Analysis failed: {exc}", state="error")
 
-        success, log = run_workflow(params)
-
-        progress.progress(100, text="Done!" if success else "Failed")
-        if success:
-            status.update(label="✅ Analysis complete!", state="complete")
-        else:
-            status.update(label="❌ Analysis failed — see log below", state="error")
-
-    # ── Results ───────────────────────────────────────────────────────────────
-    if success:
-        st.subheader("📊 Results")
-        col1, col2 = st.columns(2)
-
-        fig1 = os.path.join(HERE, "fig1_platform_motions.png")
-        fig2 = os.path.join(HERE, "fig2_mooring_tension.png")
-        fig3 = os.path.join(HERE, "fig3_cable_tension_curvature.png")
-        report = os.path.join(HERE, "results_report.txt")
-
-        with col1:
-            if os.path.exists(fig1):
-                st.image(fig1, caption="Platform 6-DOF Motions", use_container_width=True)
-            if os.path.exists(fig3):
-                st.image(fig3, caption="Cable Tension & Curvature", use_container_width=True)
-        with col2:
-            if os.path.exists(fig2):
-                st.image(fig2, caption="Mooring Tension Envelopes", use_container_width=True)
-            if os.path.exists(report):
-                with open(report) as f:
-                    st.download_button("📥 Download Report (.txt)", f.read(),
-                                       file_name="results_report.txt")
-
-        # Full text report
-        with st.expander("📄 Full Text Report"):
-            if os.path.exists(report):
-                st.text(open(report).read())
-
-    # ── Console log ───────────────────────────────────────────────────────────
-    with st.expander("🖥️ Console Log", expanded=not success):
-        st.code(log, language="bash")
+    progress_bar.empty()
 
 else:
-    # ── Welcome screen ────────────────────────────────────────────────────────
-    st.info(
-        "👈 Set your parameters in the sidebar, then click **▶ Run Analysis**.",
-        icon="ℹ️",
-    )
-    st.markdown("""
+    if st.session_state.out_dir is None:
+        st.info(
+            "👈 Set your parameters in the sidebar, then click **▶ Run Analysis**.",
+            icon="ℹ️",
+        )
+        st.markdown("""
     **Workflow overview**
 
-    | Step | Script | Description |
-    |------|--------|-------------|
-    | 1 | `workflow_01_build.py` | Build OrcaFlex model (platform, mooring, cable, environment) |
-    | 2 | `workflow_02_run.py`   | Run statics + time-domain dynamics, save `.sim` |
-    | 3 | `workflow_03_results.py` | Post-process: motions, tensions, extreme stats, plots |
+    | Step | Function | Description |
+    |------|----------|-------------|
+    | 1 | `workflow_01_build.build()` | Build OrcaFlex model |
+    | 2 | `workflow_02_run.run()`     | Static + dynamic simulation(s); supports N seeds |
+    | 3 | `workflow_03_results.post_process()` | Plots + text report; seed-aggregated extremes |
+
+    All outputs go to `./runs/<hash>/`; identical parameter sets reuse the cache.
     """)
+
+
+# ── Persistent Results ────────────────────────────────────────────────────────
+if st.session_state.out_dir and os.path.isdir(st.session_state.out_dir):
+    out_dir = st.session_state.out_dir
+    fig1    = os.path.join(out_dir, "fig1_platform_motions.png")
+    fig2    = os.path.join(out_dir, "fig2_mooring_tension.png")
+    fig3    = os.path.join(out_dir, "fig3_cable_tension_curvature.png")
+    report  = os.path.join(out_dir, "results_report.txt")
+
+    st.divider()
+    st.subheader("📊 Results")
+    st.caption(f"Output directory: `{os.path.relpath(out_dir, HERE)}`")
+
+    col1, col2 = st.columns(2)
+    with col1:
+        if os.path.exists(fig1):
+            st.image(fig1, caption="Platform 6-DOF Motions", use_container_width=True)
+        if os.path.exists(fig3):
+            st.image(fig3, caption="Cable Tension & Curvature", use_container_width=True)
+    with col2:
+        if os.path.exists(fig2):
+            st.image(fig2, caption="Mooring Tension Envelopes", use_container_width=True)
+        if os.path.exists(report):
+            with open(report, "r", encoding="utf-8") as f:
+                report_text = f.read()
+            st.download_button("📥 Download Report (.txt)", report_text,
+                               file_name="results_report.txt")
+
+    with st.expander("📄 Full Text Report"):
+        if os.path.exists(report):
+            with open(report, "r", encoding="utf-8") as f:
+                st.text(f.read())
+
+    with st.expander("🖥️ Console Log"):
+        st.code(st.session_state.analysis_log or "(empty)", language="bash")

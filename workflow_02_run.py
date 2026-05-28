@@ -1,112 +1,134 @@
 """
 OrcaFlex Workflow — Step 2: Run Simulation
 ==========================================
-Loads testModel.dat (built in Step 1), executes the full analysis sequence,
-and saves the completed simulation to testModel.sim for post-processing.
+Loads or accepts a built model, executes the full analysis sequence, and
+saves the completed simulation to a `.sim` file for post-processing.
 
 Analysis sequence
   CalculateStatics()  — finds static equilibrium (catenary shape, platform offset)
   RunSimulation()     — time-domain dynamics for all stages defined in General
 
-Model state machine
-  Reset state  ──CalculateStatics()──►  Static state
-  Static state ──RunSimulation()──────►  Simulation complete
-  Any state    ──Reset()──────────────►  Reset state  (clears dynamic results)
+Multi-seed support
+  Pass `n_seeds > 1` in `params` to run several independent random-phase
+  simulations (seed i uses WaveSeed = base_seed + i). Each `.sim` is written
+  to a separate file, and the list of paths is returned for post-processing.
 
-Parametric studies
-  To run multiple load cases without rebuilding the model each time:
-    for hs in wave_heights:
-        model.environment.WaveHs = hs           # change a parameter
-        model.Reset()                           # return to reset state
-        model.RunSimulation()                   # re-run dynamics
-        model.SaveSimulation(f"case_Hs{hs}.sim")
+Public API
+  run(params, out_dir, model=None) -> list[str]
+      Run statics + dynamics for every seed and return the saved .sim paths.
 
-Requires: workflow_01_build.py must have been run first (testModel.dat).
-Next step: workflow_03_results.py
+Standalone CLI: loads testModel.dat (built by workflow_01_build.py),
+  runs a single simulation, and saves testModel.sim next to this script.
 """
 
 import os
 import sys
+
 import OrcFxAPI
 
-HERE     = os.path.dirname(os.path.abspath(__file__))
-DAT_PATH = os.path.join(HERE, "testModel.dat")
-SIM_PATH = os.path.join(HERE, "testModel.sim")
+from project_config import params_with_defaults
+from workflow_01_build import build
+
+HERE = os.path.dirname(os.path.abspath(__file__))
+
 
 # ══════════════════════════════════════════════════════════════════════════════
-# 1. LOAD MODEL
+# PUBLIC API
 # ══════════════════════════════════════════════════════════════════════════════
-# Constructor accepts .dat (binary), .yml, or .json OrcaFlex data formats.
-if not os.path.exists(DAT_PATH):
-    print(
-        f"\nERROR — model data file not found: {DAT_PATH}\n"
-        f"        Run workflow_01_build.py first to build the model.",
-        file=sys.stderr,
-    )
-    sys.exit(1)
+def run(params: dict,
+        out_dir: str,
+        model: OrcFxAPI.Model | None = None) -> list[str]:
+    """Run statics + dynamics for every requested seed.
 
-model = OrcFxAPI.Model(DAT_PATH)
-print(f"Model loaded.             State: {model.state.name}")
-print(f"  Analysis duration : {sum(model.general.StageDuration):.0f} s total  "
-      f"({model.general.StageDuration[0]:.0f} s build-up + "
-      f"{model.general.StageDuration[1]:.0f} s analysis)")
-print(f"  Sea state         : Hs = {model.environment.WaveHs:.2f} m, "
-      f"Tp = {model.environment.WaveTp:.2f} s")
+    Parameters
+    ----------
+    params : dict      — full params dict (see project_config.GUI_DEFAULTS)
+    out_dir : str      — directory to write `.sim` files into
+    model  : Model     — pre-built model. If None, build() is called once.
 
-# ══════════════════════════════════════════════════════════════════════════════
-# 2. STATIC EQUILIBRIUM
-# ══════════════════════════════════════════════════════════════════════════════
-# Solves for the equilibrium configuration under mean wind / current / gravity.
-# After this step, StaticResult() and RangeGraph() (without a period) are valid.
-try:
-    model.CalculateStatics()
-except OrcFxAPI.DLLError as e:
-    print(f"\nERROR — statics did not converge: {e}", file=sys.stderr)
-    sys.exit(1)
-print(f"\nAfter CalculateStatics.   State: {model.state.name}")
+    Returns
+    -------
+    List of `.sim` paths, in seed order.
+    """
+    p          = params_with_defaults(params)
+    n_seeds    = max(1, int(p["n_seeds"]))
+    base_seed  = int(p["wave_seed"])
 
-# --- Static sanity checks ---
-platform = model["Platform"]
+    os.makedirs(out_dir, exist_ok=True)
 
-# All mooring lines — check static tension at fairlead (End A) and anchor (End B)
-print("\n  Static mooring tensions:")
-print(f"  {'Line':<12}  {'EndA (kN)':>12}  {'EndB (kN)':>12}")
-for obj in model.objects:
-    if obj.Name.startswith("Mooring"):
-        Te_A = obj.StaticResult("Effective tension", OrcFxAPI.oeEndA)
-        Te_B = obj.StaticResult("Effective tension", OrcFxAPI.oeEndB)
-        print(f"  {obj.Name:<12}  {Te_A:12.1f}  {Te_B:12.1f}")
+    if model is None:
+        model = build(p)
 
-# Dynamic cable — check static tension and minimum bend radius at ends
-cable = model["ExportCable"]
-Te_cable_A = cable.StaticResult("Effective tension", OrcFxAPI.oeEndA)
-Te_cable_B = cable.StaticResult("Effective tension", OrcFxAPI.oeEndB)
-print(f"\n  Export cable static tension:  End A = {Te_cable_A:.1f} kN, "
-      f"End B = {Te_cable_B:.1f} kN")
+    sim_paths: list[str] = []
+    for i in range(n_seeds):
+        seed = base_seed + i
+        model.Reset()                          # clear any prior dynamic results
+        model.environment.WaveSeed = seed
 
-# Static platform offset (X, Y displacement from origin)
-X_static = platform.StaticResult("X")
-Y_static = platform.StaticResult("Y")
-print(f"\n  Platform static offset:  X = {X_static:.2f} m,  Y = {Y_static:.2f} m")
+        try:
+            model.CalculateStatics()
+        except OrcFxAPI.DLLError as e:
+            raise RuntimeError(f"Statics failed (seed {seed}): {e}") from e
 
-# ══════════════════════════════════════════════════════════════════════════════
-# 3. DYNAMIC TIME-DOMAIN SIMULATION
-# ══════════════════════════════════════════════════════════════════════════════
-# Runs all stages defined in General.StageDuration.
-# For Marine Ops weather-window studies, loop over multiple wave seeds here
-# and aggregate results before saving the final .sim.
-try:
-    model.RunSimulation()
-except OrcFxAPI.DLLError as e:
-    print(f"\nERROR — dynamic simulation failed: {e}", file=sys.stderr)
-    sys.exit(1)
-print(f"\nAfter RunSimulation.      State: {model.state.name}")
+        try:
+            model.RunSimulation()
+        except OrcFxAPI.DLLError as e:
+            raise RuntimeError(f"Dynamics failed (seed {seed}): {e}") from e
+
+        if n_seeds == 1:
+            sim_name = "testModel.sim"
+        else:
+            sim_name = f"testModel_seed{i:02d}.sim"
+        sim_path = os.path.join(out_dir, sim_name)
+        model.SaveSimulation(sim_path)
+        sim_paths.append(sim_path)
+        print(f"  seed {seed} ({i+1}/{n_seeds}) → {sim_name}")
+
+    return sim_paths
+
 
 # ══════════════════════════════════════════════════════════════════════════════
-# 4. SAVE SIMULATION RESULTS
+# CLI ENTRY POINT
 # ══════════════════════════════════════════════════════════════════════════════
-# The .sim file stores both model data and all calculated time histories.
-# workflow_03_results.py loads this file for post-processing.
-model.SaveSimulation(SIM_PATH)
-print(f"\nSimulation saved: {SIM_PATH}")
-print("Next step: run workflow_03_results.py")
+def main():
+    dat_path = os.path.join(HERE, "testModel.dat")
+    if not os.path.exists(dat_path):
+        print(
+            f"\nERROR — model data file not found: {dat_path}\n"
+            f"        Run workflow_01_build.py first to build the model.",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+
+    model = OrcFxAPI.Model(dat_path)
+    print(f"Model loaded.             State: {model.state.name}")
+    print(f"  Analysis duration : {sum(model.general.StageDuration):.0f} s total  "
+          f"({model.general.StageDuration[0]:.0f} s build-up + "
+          f"{model.general.StageDuration[1]:.0f} s analysis)")
+    print(f"  Sea state         : Hs = {model.environment.WaveHs:.2f} m, "
+          f"Tp = {model.environment.WaveTp:.2f} s")
+
+    params = params_with_defaults()
+    try:
+        sim_paths = run(params, out_dir=HERE, model=model)
+    except RuntimeError as exc:
+        print(f"\nERROR — {exc}", file=sys.stderr)
+        sys.exit(1)
+
+    # Static sanity print using the final solved state
+    print("\n  Static mooring tensions (last run):")
+    print(f"  {'Line':<12}  {'EndA (kN)':>12}  {'EndB (kN)':>12}")
+    for obj in model.objects:
+        if obj.Name.startswith("Mooring"):
+            Te_A = obj.StaticResult("Effective tension", OrcFxAPI.oeEndA)
+            Te_B = obj.StaticResult("Effective tension", OrcFxAPI.oeEndB)
+            print(f"  {obj.Name:<12}  {Te_A:12.1f}  {Te_B:12.1f}")
+
+    print(f"\nSimulation(s) saved:")
+    for path in sim_paths:
+        print(f"  {path}")
+    print("Next step: run workflow_03_results.py")
+
+
+if __name__ == "__main__":
+    main()

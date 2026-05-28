@@ -11,6 +11,7 @@ results_report.txt
 fig1_platform_motions.png
 fig2_mooring_tension.png
 fig3_cable_tension_curvature.png
+runs/
 
 # C extensions
 *.so
