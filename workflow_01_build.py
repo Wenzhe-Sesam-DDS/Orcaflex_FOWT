@@ -20,43 +20,76 @@ import math
 import os
 import OrcFxAPI
 
-from project_config import (
-    WATER_DEPTH,
-    MOORING_MBL,
-    BUILDUP_DURATION,
-    ANALYSIS_DURATION,
-)
+import project_config as cfg
+from project_config import GUI_DEFAULTS as D
 
 HERE = os.path.dirname(os.path.abspath(__file__))   # write outputs next to this script
 
+def _env(key, default):
+    """Read a float override from an environment variable set by the GUI.
+
+    Raises a clear error if the env var is set but cannot be parsed as float,
+    so user input mistakes don't fail later with cryptic OrcFxAPI errors.
+    """
+    val = os.environ.get(key)
+    if val is None:
+        return float(default)
+    try:
+        return float(val)
+    except ValueError as exc:
+        raise ValueError(f"Environment variable {key}={val!r} is not a valid number") from exc
+
 # ══════════════════════════════════════════════════════════════════════════════
-# PROJECT PARAMETERS — edit this block to configure a different site / load case
-# (WATER_DEPTH, MOORING_MBL and stage durations come from project_config.py)
+# PROJECT PARAMETERS
+#   • Defaults come from project_config.GUI_DEFAULTS (single source of truth).
+#   • Each value can be overridden at runtime via a GUI_<KEY> env var.
 # ══════════════════════════════════════════════════════════════════════════════
+
+# Site / global
+WATER_DEPTH       = _env("GUI_WATER_DEPTH",       cfg.WATER_DEPTH)
+MOORING_MBL       = _env("GUI_MOORING_MBL",       cfg.MOORING_MBL)
+BUILDUP_DURATION  = _env("GUI_BUILDUP_DURATION",  cfg.BUILDUP_DURATION)
+ANALYSIS_DURATION = _env("GUI_ANALYSIS_DURATION", cfg.ANALYSIS_DURATION)
 
 # Design sea state (ULS / 50-yr extreme)
-WAVE_HS         = 5.5        # m   significant wave height
-WAVE_TP         = 14.0       # s   spectral peak period
-WAVE_DIRECTION  = 0.0        # deg (waves travelling in +X direction)
-WIND_SPEED      = 18.0       # m/s (10-min mean)
-WIND_DIRECTION  = 180.0      # deg (wind from south, travelling north)
-CURRENT_SPEED   = 0.8        # m/s (near-surface, uniform with depth)
-CURRENT_DIR     = 315.0      # deg
+WAVE_HS         = _env("GUI_WAVE_HS",         D["wave_hs"])
+WAVE_TP         = _env("GUI_WAVE_TP",         D["wave_tp"])
+WAVE_DIRECTION  = _env("GUI_WAVE_DIRECTION",  D["wave_direction"])
+WIND_SPEED      = _env("GUI_WIND_SPEED",      D["wind_speed"])
+WIND_DIRECTION  = _env("GUI_WIND_DIRECTION",  D["wind_direction"])
+CURRENT_SPEED   = _env("GUI_CURRENT_SPEED",   D["current_speed"])
+CURRENT_DIR     = _env("GUI_CURRENT_DIR",     D["current_dir"])
 
 # Mooring geometry (3-leg spread catenary, symmetric about platform)
-# Sized for a clear catenary shape: straight-line fairlead→anchor ≈ 568 m,
-# total length 660 m → ~90 m slack → modest seabed laydown near the anchor.
-FAIRLEAD_RADIUS =   45.0     # m   horizontal offset of fairlead from hull centre
-FAIRLEAD_DEPTH  =  -20.0     # m   fairlead depth below WL (negative = below)
-ANCHOR_RADIUS   =  600.0     # m   horizontal offset of anchor from hull centre
-MOORING_LENGTH  =  660.0     # m   total laid chain length per leg
+FAIRLEAD_RADIUS = _env("GUI_FAIRLEAD_RADIUS", D["fairlead_radius"])
+FAIRLEAD_DEPTH  = _env("GUI_FAIRLEAD_DEPTH",  D["fairlead_depth"])
+ANCHOR_RADIUS   = _env("GUI_ANCHOR_RADIUS",   D["anchor_radius"])
+MOORING_LENGTH  = _env("GUI_MOORING_LENGTH",  D["mooring_length"])
+
+# Per-line orientation defaults (overridden per leg via GUI_MOORING{i}_* env vars)
+MOORING_ENDA_DECLINATION = D["mooring_enda_declination"]
+MOORING_ENDA_GAMMA       = D["mooring_enda_gamma"]
+MOORING_ENDB_DECLINATION = D["mooring_endb_declination"]
+MOORING_ENDB_GAMMA       = D["mooring_endb_gamma"]
+MOORING_LAY_AZIMUTH      = D["mooring_lay_azimuth_off"]
+MOORING_AS_LAID_TENSION  = D["mooring_as_laid_tension"]
 
 # Dynamic cable geometry (global coordinates)
-# Sized for a visible lazy-wave shape: straight-line hang-off→touchdown ≈ 427 m,
-# total length 480 m → ~50 m slack distributed across sag / hog bends.
-CABLE_HANGOFF_X = -35.0      # m   I-tube exit on hull
-CABLE_HANGOFF_Z = -15.0      # m   depth of hang-off point below WL
-CABLE_SEABED_X  = -420.0     # m   J-tube entry on seabed
+CABLE_HANGOFF_X = _env("GUI_CABLE_HANGOFF_X", D["cable_hangoff_x"])
+CABLE_HANGOFF_Z = _env("GUI_CABLE_HANGOFF_Z", D["cable_hangoff_z"])
+CABLE_SEABED_X  = _env("GUI_CABLE_SEABED_X",  D["cable_seabed_x"])
+
+# Cable end orientations
+CABLE_ENDA_AZIMUTH     = _env("GUI_CABLE_ENDA_AZIMUTH",     D["cable_enda_azimuth"])
+CABLE_ENDA_DECLINATION = _env("GUI_CABLE_ENDA_DECLINATION", D["cable_enda_declination"])
+CABLE_ENDA_GAMMA       = _env("GUI_CABLE_ENDA_GAMMA",       D["cable_enda_gamma"])
+CABLE_ENDB_AZIMUTH     = _env("GUI_CABLE_ENDB_AZIMUTH",     D["cable_endb_azimuth"])
+CABLE_ENDB_DECLINATION = _env("GUI_CABLE_ENDB_DECLINATION", D["cable_endb_declination"])
+CABLE_ENDB_GAMMA       = _env("GUI_CABLE_ENDB_GAMMA",       D["cable_endb_gamma"])
+
+# Cable statics
+CABLE_LAY_AZIMUTH     = _env("GUI_CABLE_LAY_AZIMUTH",     D["cable_lay_azimuth"])
+CABLE_AS_LAID_TENSION = _env("GUI_CABLE_AS_LAID_TENSION", D["cable_as_laid_tension"])
 
 # ══════════════════════════════════════════════════════════════════════════════
 # 1. MODEL AND GENERAL SETTINGS
@@ -121,6 +154,65 @@ env.RefCurrentDirection = CURRENT_DIR
 #   2. Assign it here:   platform.VesselType = "Semi-Sub"; platform.Draught = "Draught1"
 platform = model.CreateObject(OrcFxAPI.ObjectType.Vessel, "Platform")
 
+# ── OC4-DeepCwind 3-column semi-sub visual representation ────────────────────
+# Shape objects are attached to the Platform and move with it in the 3D view.
+# Dimensions from: Robertson et al. (2014) OC4-DeepCwind definition report.
+#
+# Platform local coordinate system (origin = waterline amidships):
+#   +X forward, +Y port, +Z up
+#   z =   0  → waterline
+#   z = -20  → keel
+#   z = +12  → top of column
+# Shape InitialZ is the CENTRE of each cylinder in the Platform local frame.
+
+OC4_COL_OFFSET_R = 40.868   # m  radius: platform centre → offset column centre
+OC4_DRAFT        = 20.0     # m  platform draft
+OC4_FREEBOARD    = 12.0     # m  column height above waterline
+OC4_CENTRAL_D    =  6.5     # m  central column outer diameter
+OC4_OFFSET_COL_D = 12.0     # m  upper offset column outer diameter
+OC4_BASE_D       = 24.0     # m  base column outer diameter
+OC4_BASE_H       =  6.0     # m  base column height
+OC4_UPPER_COL_H  = OC4_DRAFT + OC4_FREEBOARD - OC4_BASE_H   # 26 m
+
+def _add_cylinder(name, cx, cy, z_bottom, height, diameter):
+    """Create a cylindrical Shape attached to the Platform vessel."""
+    s = model.CreateObject(OrcFxAPI.ObjectType.Shape, name)
+    s.SetData("Connection",    0, platform.Name)
+    s.SetData("Shape",         0, "Cylinder")
+    s.SetData("OriginX",       0, cx)
+    s.SetData("OriginY",       0, cy)
+    s.SetData("OriginZ",       0, z_bottom + height / 2.0)   # cylinder centre
+    s.SetData("Length",        0, height)
+    s.SetData("OuterDiameter", 0, diameter)
+    s.SetData("InnerDiameter", 0, 0.0)
+    return s
+
+# Central column: keel → top (full height = draft + freeboard = 32 m)
+_add_cylinder("Shape_CentralColumn", 0.0, 0.0,
+              z_bottom=-OC4_DRAFT,
+              height=OC4_DRAFT + OC4_FREEBOARD,
+              diameter=OC4_CENTRAL_D)
+
+# 3 × upper offset columns + base columns at 0° / 120° / 240°
+for _i, _hdg in enumerate([0.0, 120.0, 240.0]):
+    _rad = math.radians(_hdg)
+    _cx  = OC4_COL_OFFSET_R * math.cos(_rad)
+    _cy  = OC4_COL_OFFSET_R * math.sin(_rad)
+
+    # Upper offset column (above base section)
+    _add_cylinder(f"Shape_OffsetColumn{_i+1}", _cx, _cy,
+                  z_bottom=-OC4_DRAFT + OC4_BASE_H,
+                  height=OC4_UPPER_COL_H,
+                  diameter=OC4_OFFSET_COL_D)
+
+    # Base column (large-diameter lower section)
+    _add_cylinder(f"Shape_BaseColumn{_i+1}", _cx, _cy,
+                  z_bottom=-OC4_DRAFT,
+                  height=OC4_BASE_H,
+                  diameter=OC4_BASE_D)
+
+print("OC4 semi-sub geometry: 1 central + 3 offset + 3 base columns added.")
+
 # ══════════════════════════════════════════════════════════════════════════════
 # 4. LINE TYPES
 # ══════════════════════════════════════════════════════════════════════════════
@@ -169,7 +261,7 @@ buoy_type.EIy               = 8.0
 # ══════════════════════════════════════════════════════════════════════════════
 # Headings are offset from the primary wave direction so no leg is directly
 # upwave or downwave.  Adjust to the project-specific anchor pattern.
-MOORING_HEADINGS = [30.0, 150.0, 270.0]   # degrees (global azimuth from +X)
+MOORING_HEADINGS = [0.0, 120.0, 240.0]   # degrees (global azimuth from +X)
 
 for i, hdg_deg in enumerate(MOORING_HEADINGS, start=1):
     rad = math.radians(hdg_deg)
@@ -193,6 +285,20 @@ for i, hdg_deg in enumerate(MOORING_HEADINGS, start=1):
     ml.LineType            = chain.Name,      # trailing comma → 1-element tuple
     ml.Length              = MOORING_LENGTH,
     ml.TargetSegmentLength = 10.0,            # m (coarser in mid-water catenary)
+
+    # Per-line orientation — GUI sends GUI_MOORING{i}_ENDA_AZIMUTH etc.
+    # Defaults fall back to the leg heading / shared constants when run standalone.
+    ml.EndAAzimuth     = _env(f"GUI_MOORING{i}_ENDA_AZIMUTH",     hdg_deg)
+    ml.EndADeclination = _env(f"GUI_MOORING{i}_ENDA_DECLINATION", MOORING_ENDA_DECLINATION)
+    ml.EndAGamma       = _env(f"GUI_MOORING{i}_ENDA_GAMMA",       MOORING_ENDA_GAMMA)
+
+    ml.EndBAzimuth     = _env(f"GUI_MOORING{i}_ENDB_AZIMUTH",     hdg_deg)
+    ml.EndBDeclination = _env(f"GUI_MOORING{i}_ENDB_DECLINATION", MOORING_ENDB_DECLINATION)
+    ml.EndBGamma       = _env(f"GUI_MOORING{i}_ENDB_GAMMA",       MOORING_ENDB_GAMMA)
+
+    # Per-line statics
+    ml.LayAzimuth    = _env(f"GUI_MOORING{i}_LAY_AZIMUTH",    (hdg_deg + 180.0 + MOORING_LAY_AZIMUTH) % 360.0)
+    ml.AsLaidTension = _env(f"GUI_MOORING{i}_AS_LAID_TENSION", MOORING_AS_LAID_TENSION)
 
 # ══════════════════════════════════════════════════════════════════════════════
 # 6. DYNAMIC EXPORT CABLE — 3-section lazy-wave configuration
@@ -227,6 +333,20 @@ cable.EndBZ = -WATER_DEPTH
 cable.LineType            = cable_type.Name, buoy_type.Name, cable_type.Name
 cable.Length              = 150.0, 120.0, 210.0   # m  (top, buoyancy, bottom)
 cable.TargetSegmentLength = 5.0, 3.0, 5.0
+
+# End A orientation (hang-off at I-tube)
+cable.EndAAzimuth     = CABLE_ENDA_AZIMUTH
+cable.EndADeclination = CABLE_ENDA_DECLINATION
+cable.EndAGamma       = CABLE_ENDA_GAMMA
+
+# End B orientation (J-tube entry on seabed)
+cable.EndBAzimuth     = CABLE_ENDB_AZIMUTH
+cable.EndBDeclination = CABLE_ENDB_DECLINATION
+cable.EndBGamma       = CABLE_ENDB_GAMMA
+
+# Statics
+cable.LayAzimuth    = CABLE_LAY_AZIMUTH
+cable.AsLaidTension = CABLE_AS_LAID_TENSION
 
 # ══════════════════════════════════════════════════════════════════════════════
 # 7. SAVE

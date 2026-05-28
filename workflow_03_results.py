@@ -43,14 +43,34 @@ import matplotlib
 matplotlib.use("Agg")   # non-interactive backend; switch to "TkAgg" to show windows
 import matplotlib.pyplot as plt
 
-from project_config import MOORING_MBL, CABLE_MBR
+from project_config import MOORING_MBL as _CFG_MBL, CABLE_MBR as _CFG_MBR, GUI_DEFAULTS as _D
 
 # ══════════════════════════════════════════════════════════════════════════════
-# CONFIGURATION
+# CONFIGURATION — defaults from project_config; overridable via GUI env vars
 # ══════════════════════════════════════════════════════════════════════════════
-STORM_HOURS = 3          # h   storm duration for extreme statistics
-RISK_PCT    = 5          # %   risk factor for extreme value query
-PERIOD      = 1          # analysis stage (stage 1)
+def _env_float(key, default):
+    v = os.environ.get(key)
+    if v is None:
+        return float(default)
+    try:
+        return float(v)
+    except ValueError as exc:
+        raise ValueError(f"Environment variable {key}={v!r} is not a valid number") from exc
+
+def _env_int(key, default):
+    v = os.environ.get(key)
+    if v is None:
+        return int(default)
+    try:
+        return int(float(v))
+    except ValueError as exc:
+        raise ValueError(f"Environment variable {key}={v!r} is not a valid integer") from exc
+
+MOORING_MBL = _env_float("GUI_MOORING_MBL", _CFG_MBL)
+CABLE_MBR   = _env_float("GUI_CABLE_MBR",   _CFG_MBR)
+STORM_HOURS = _env_int(  "GUI_STORM_HOURS", _D["storm_hours"])  # h   storm duration for extreme statistics
+RISK_PCT    = _env_int(  "GUI_RISK_PCT",    _D["risk_pct"])     # %   risk factor for extreme value query
+PERIOD      = _env_int(  "GUI_PERIOD",      _D["period"])       # analysis stage (0 = build-up, 1 = analysis)
 
 HERE       = os.path.dirname(os.path.abspath(__file__))
 SIM_PATH   = os.path.join(HERE, "testModel.sim")
@@ -412,6 +432,13 @@ def plot_all(ctx):
 # MAIN
 # ══════════════════════════════════════════════════════════════════════════════
 def main():
+    if not os.path.exists(SIM_PATH):
+        print(
+            f"\nERROR — simulation file not found: {SIM_PATH}\n"
+            f"        Run workflow_02_run.py first to produce the .sim file.",
+            file=sys.stderr,
+        )
+        sys.exit(1)
     model = OrcFxAPI.Model(SIM_PATH)
 
     # Write text report (mirrored to console + file) using a guaranteed restore.

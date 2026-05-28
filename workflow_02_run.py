@@ -37,6 +37,14 @@ SIM_PATH = os.path.join(HERE, "testModel.sim")
 # 1. LOAD MODEL
 # ══════════════════════════════════════════════════════════════════════════════
 # Constructor accepts .dat (binary), .yml, or .json OrcaFlex data formats.
+if not os.path.exists(DAT_PATH):
+    print(
+        f"\nERROR — model data file not found: {DAT_PATH}\n"
+        f"        Run workflow_01_build.py first to build the model.",
+        file=sys.stderr,
+    )
+    sys.exit(1)
+
 model = OrcFxAPI.Model(DAT_PATH)
 print(f"Model loaded.             State: {model.state.name}")
 print(f"  Analysis duration : {sum(model.general.StageDuration):.0f} s total  "
