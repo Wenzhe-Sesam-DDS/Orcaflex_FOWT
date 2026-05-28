@@ -1,8 +1,8 @@
 ﻿%YAML 1.1
 # Type: Model
 # Program: OrcaFlex 11.5b
-# File: c:\Users\WENZHAN\Desktop\OrcaflexAPI_Test\testModel.yml
-# Created: 10:42 on 22/05/2026
+# File: C:\Users\WENZHAN\Desktop\OrcaflexAPI_Test\testModel.yml
+# Created: 15:09 on 28/05/2026
 # User: WENZHAN
 # Machine: OSLL200504
 ---
@@ -50,7 +50,7 @@ Environment:
   # Seabed
   SeabedType: Flat
   SeabedOrigin: [0, 0]
-  WaterDepth: 200
+  WaterDepth: 205
   SeabedSlopeDirection: 0
   SeabedSlope: 0
   SeabedModel: Elastic
@@ -68,8 +68,8 @@ Environment:
       WaveTimeOrigin: 0
       WaveNumberOfSpectralDirections: 1
       WaveJONSWAPParameters: Partially specified
-      WaveHs: 5.5
-      WaveTz: 9.946439999999999
+      WaveHs: 4
+      WaveTz: 8.525519999999998
       WaveGamma: 1
       WaveSeed: 314159
       WaveNumberOfComponents: 200
@@ -102,7 +102,7 @@ Environment:
   WindType: Constant
   AirDensity: 0.00128
   AirSpeedOfSound: 343
-  WindSpeed: 18
+  WindSpeed: 12
   WindDirection: 180
   VerticalWindVariationFactor: ~
 VesselTypes:
@@ -1730,8 +1730,8 @@ Lines:
     WaveCalculationMethod: Specified by environment
     # End connections
     Connection, ConnectionX, ConnectionY, ConnectionZ, ConnectionAzimuth, ConnectionDeclination, ConnectionGamma, ConnectionReleaseStage, ConnectionzRelativeTo:
-      - [Platform, 38.97114317029974, 22.499999999999996, -20, 0, 0, 0, ~]
-      - [Fixed, 519.6152422706632, 299.99999999999994, -200, 0, 0, 0, ~]
+      - [Platform, 45, 0, -20, 0, 0, 0, ~]
+      - [Fixed, 600, 0, -205, 0, 90, 0, ~]
     # End connection stiffness
     ConnectionxBendingStiffness, ConnectionyBendingStiffness:
       - [0, ~]
@@ -1774,8 +1774,8 @@ Lines:
     WaveCalculationMethod: Specified by environment
     # End connections
     Connection, ConnectionX, ConnectionY, ConnectionZ, ConnectionAzimuth, ConnectionDeclination, ConnectionGamma, ConnectionReleaseStage, ConnectionzRelativeTo:
-      - [Platform, -38.97114317029974, 22.499999999999996, -20, 0, 0, 0, ~]
-      - [Fixed, -519.6152422706632, 299.99999999999994, -200, 0, 0, 0, ~]
+      - [Platform, -22.49999999999999, 38.97114317029974, -20, 120, 0, 0, ~]
+      - [Fixed, -299.9999999999999, 519.6152422706632, -205, 120, 90, 0, ~]
     # End connection stiffness
     ConnectionxBendingStiffness, ConnectionyBendingStiffness:
       - [0, ~]
@@ -1803,7 +1803,7 @@ Lines:
     StaticsStep1: Catenary
     StaticsStep2: Full statics
     StaticsSeabedFrictionPolicy: As laid
-    LayAzimuth: 180
+    LayAzimuth: 300
     AsLaidTension: 0
   - Name: Mooring3
     IncludeTorsion: No
@@ -1818,8 +1818,8 @@ Lines:
     WaveCalculationMethod: Specified by environment
     # End connections
     Connection, ConnectionX, ConnectionY, ConnectionZ, ConnectionAzimuth, ConnectionDeclination, ConnectionGamma, ConnectionReleaseStage, ConnectionzRelativeTo:
-      - [Platform, -8.266365894244634e-15, -45, -20, 0, 0, 0, ~]
-      - [Fixed, -110.21821192326178e-15, -600, -200, 0, 0, 0, ~]
+      - [Platform, -22.50000000000002, -38.97114317029973, -20, 240, 0, 0, ~]
+      - [Fixed, -300.0000000000003, -519.6152422706631, -205, 240, 90, 0, ~]
     # End connection stiffness
     ConnectionxBendingStiffness, ConnectionyBendingStiffness:
       - [0, ~]
@@ -1847,7 +1847,7 @@ Lines:
     StaticsStep1: Catenary
     StaticsStep2: Full statics
     StaticsSeabedFrictionPolicy: As laid
-    LayAzimuth: 180
+    LayAzimuth: 360
     AsLaidTension: 0
   - Name: ExportCable
     IncludeTorsion: No
@@ -1862,8 +1862,8 @@ Lines:
     WaveCalculationMethod: Specified by environment
     # End connections
     Connection, ConnectionX, ConnectionY, ConnectionZ, ConnectionAzimuth, ConnectionDeclination, ConnectionGamma, ConnectionReleaseStage, ConnectionzRelativeTo:
-      - [Platform, -35, 0, -15, 0, 0, 0, ~]
-      - [Fixed, -420, 0, -200, 0, 0, 0, ~]
+      - [Platform, -35, 0, -15, 180, 0, 0, ~]
+      - [Fixed, -420, 0, -205, 0, 90, 0, ~]
     # End connection stiffness
     ConnectionxBendingStiffness, ConnectionyBendingStiffness:
       - [0, ~]
@@ -1893,11 +1893,117 @@ Lines:
     StaticsStep1: Catenary
     StaticsStep2: Full statics
     StaticsSeabedFrictionPolicy: As laid
-    LayAzimuth: 180
+    LayAzimuth: 360
     AsLaidTension: 0
+Shapes:
+  - Name: Shape_CentralColumn
+    ShapeType: Elastic solid
+    Shape: Cylinder
+    Connection: Platform
+    # Geometry
+    Origin: [0, 0, -4]
+    Azimuth: 0
+    Declination: 0
+    Length: 32
+    OuterDiameter: 6.5
+    InnerDiameter: 0
+    # Stiffness and damping
+    NormalStiffness: 100
+    ShearStiffness: 100
+  - Name: Shape_OffsetColumn1
+    ShapeType: Elastic solid
+    Shape: Cylinder
+    Connection: Platform
+    # Geometry
+    Origin: [40.868, 0, -1]
+    Azimuth: 0
+    Declination: 0
+    Length: 26
+    OuterDiameter: 12
+    InnerDiameter: 0
+    # Stiffness and damping
+    NormalStiffness: 100
+    ShearStiffness: 100
+  - Name: Shape_BaseColumn1
+    ShapeType: Elastic solid
+    Shape: Cylinder
+    Connection: Platform
+    # Geometry
+    Origin: [40.868, 0, -17]
+    Azimuth: 0
+    Declination: 0
+    Length: 6
+    OuterDiameter: 24
+    InnerDiameter: 0
+    # Stiffness and damping
+    NormalStiffness: 100
+    ShearStiffness: 100
+  - Name: Shape_OffsetColumn2
+    ShapeType: Elastic solid
+    Shape: Cylinder
+    Connection: Platform
+    # Geometry
+    Origin: [-20.43399999999999, 35.392726201862445, -1]
+    Azimuth: 0
+    Declination: 0
+    Length: 26
+    OuterDiameter: 12
+    InnerDiameter: 0
+    # Stiffness and damping
+    NormalStiffness: 100
+    ShearStiffness: 100
+  - Name: Shape_BaseColumn2
+    ShapeType: Elastic solid
+    Shape: Cylinder
+    Connection: Platform
+    # Geometry
+    Origin: [-20.43399999999999, 35.392726201862445, -17]
+    Azimuth: 0
+    Declination: 0
+    Length: 6
+    OuterDiameter: 24
+    InnerDiameter: 0
+    # Stiffness and damping
+    NormalStiffness: 100
+    ShearStiffness: 100
+  - Name: Shape_OffsetColumn3
+    ShapeType: Elastic solid
+    Shape: Cylinder
+    Connection: Platform
+    # Geometry
+    Origin: [-20.43400000000002, -35.39272620186243, -1]
+    Azimuth: 0
+    Declination: 0
+    Length: 26
+    OuterDiameter: 12
+    InnerDiameter: 0
+    # Stiffness and damping
+    NormalStiffness: 100
+    ShearStiffness: 100
+  - Name: Shape_BaseColumn3
+    ShapeType: Elastic solid
+    Shape: Cylinder
+    Connection: Platform
+    # Geometry
+    Origin: [-20.43400000000002, -35.39272620186243, -17]
+    Azimuth: 0
+    Declination: 0
+    Length: 6
+    OuterDiameter: 24
+    InnerDiameter: 0
+    # Stiffness and damping
+    NormalStiffness: 100
+    ShearStiffness: 100
 Groups:
   Structure:
     Platform: Model
+    Shape_CentralColumn: Model
+    Shape_OffsetColumn1: Model
+    Shape_BaseColumn1: Model
+    Shape_OffsetColumn2: Model
+    Shape_BaseColumn2: Model
+    Shape_OffsetColumn3: Model
+    Shape_BaseColumn3: Model
     Mooring1: Model
     Mooring2: Model
     Mooring3: Model
