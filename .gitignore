@@ -3,6 +3,9 @@ __pycache__/
 *.py[codz]
 *$py.class
 
+# OrcaFlex simulation results — too large for GitHub (use local storage)
+*.sim
+
 # C extensions
 *.so
 
