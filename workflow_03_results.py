@@ -14,8 +14,9 @@ Sections
   4. Dynamic cable              (tension, minimum bend radius, touchdown point)
   5. Linked statistics          (correlated variable queries, spectral moments)
   6. Fatigue — rainflow half-cycles
-  7. Extreme statistics         (Rayleigh fits, MPM, risk-factor extremes,
-                                 aggregated across all seeds if n_seeds > 1)
+  7. Extreme statistics         (per-seed Rayleigh MPM + risk-factor extremes;
+                                 cross-seed Gumbel block-max P50/P90 when
+                                 n_seeds >= 2 — DNV-RP-F205 / OS-E301)
 
 Public API
   post_process(sim_paths, params, out_dir) -> dict
@@ -98,6 +99,40 @@ def _rayleigh_extremes(obj, var_name, period, storm_hours, risk_pct, oe=None):
         r = ext.Query(OrcFxAPI.RayleighStatisticsQuery(storm_hours, risk_pct))
         out[label] = (r.MostProbableExtremeValue, r.ExtremeValueWithRiskFactor)
     return out
+
+
+def _block_max_min(obj, var_name, period, oe=None):
+    """Return (max, min) of a time history over `period`."""
+    kwargs = {"objectExtra": oe} if oe is not None else {}
+    th = obj.TimeHistory(var_name, period, **kwargs)
+    return float(np.max(th)), float(np.min(th))
+
+
+def _gumbel_fit(samples):
+    """Fit Gumbel (EVI, max) to samples. Returns (mu, beta).
+
+    Uses MLE via scipy if available, else method of moments
+        beta = s * sqrt(6)/pi,  mu = mean - gamma*beta   (gamma ≈ 0.5772)
+    """
+    x = np.asarray(samples, dtype=float)
+    if x.size < 2:
+        return float(x.mean()) if x.size else 0.0, 0.0
+    try:
+        from scipy.stats import gumbel_r           # noqa: F401
+        mu, beta = gumbel_r.fit(x)
+        return float(mu), float(beta)
+    except Exception:
+        s = x.std(ddof=1)
+        beta = s * math.sqrt(6.0) / math.pi
+        mu   = x.mean() - 0.5772156649 * beta
+        return float(mu), float(beta)
+
+
+def _gumbel_quantile(mu, beta, p):
+    """p-quantile of Gumbel(mu, beta):  x_p = mu - beta * ln(-ln p)."""
+    if beta == 0.0:
+        return mu
+    return mu - beta * math.log(-math.log(p))
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -270,20 +305,37 @@ def _run_report(model, cfg: dict):
 # Extreme-statistics aggregation across seeds
 # ══════════════════════════════════════════════════════════════════════════════
 def _aggregate_extremes(sim_paths, cfg):
-    """Compute Rayleigh-fitted extremes for each seed; print summary."""
+    """Per-seed Rayleigh MPM + cross-seed Gumbel block-max statistics.
+
+    Two complementary extreme-value methods are reported:
+
+    * **Rayleigh MPM** (per seed) — fits Rayleigh to all peaks of the 3 h
+      time-history. Gives the *mode* of the 3 h maximum distribution. Best
+      for narrow-band, near-Gaussian responses (e.g. platform heave).
+      Cross-seed `mean ± std (worst)` ≈ the expected MPM.
+
+    * **Gumbel block-max** (across seeds) — fits Gumbel/EVI to the N true
+      3 h maxima (one per seed). Gives proper 3 h max distribution quantiles
+      (P50, P90). Required for non-Gaussian responses (mooring tension,
+      cable tension); recommended by DNV-RP-F205 / DNVGL-OS-E301 with N ≥ 6.
+    """
     period      = cfg["period"]
     storm_hours = cfg["storm_hours"]
     risk_pct    = cfg["risk_pct"]
     mooring_mbl = cfg["mooring_mbl"]
 
     SEP = "=" * 65
+    n_seeds = len(sim_paths)
     print(f"\n{SEP}\nSECTION 7 — Extreme Statistics  "
           f"({storm_hours} h storm, {risk_pct}% risk, "
-          f"{len(sim_paths)} seed{'s' if len(sim_paths) > 1 else ''})\n{SEP}")
+          f"{n_seeds} seed{'s' if n_seeds > 1 else ''})\n{SEP}")
 
     metrics = {"heave_mpm_up": [], "heave_mpm_lo": [],
                "moor_mpm":     [], "moor_risk":    [],
-               "cable_mpm":    [], "cable_risk":   []}
+               "cable_mpm":    [], "cable_risk":   [],
+               # 3 h block max/min from each seed's time history (for Gumbel)
+               "heave_bmax":   [], "heave_bmin":   [],
+               "moor_bmax":    [], "cable_bmax":   []}
     most_loaded_name = None
 
     for idx, sim_path in enumerate(sim_paths):
@@ -308,16 +360,30 @@ def _aggregate_extremes(sim_paths, cfg):
         metrics["moor_risk"].append(r_m["upper"][1])
         metrics["cable_mpm"].append(r_c["upper"][0])
         metrics["cable_risk"].append(r_c["upper"][1])
-        print(f"  seed {idx+1}/{len(sim_paths)}: "
+
+        # Block max/min for Gumbel fit (proper 3 h max distribution sample)
+        h_max, h_min = _block_max_min(pf, "Z", period)
+        mo_max, _    = _block_max_min(most, "Effective tension", period,
+                                      oe=OrcFxAPI.oeEndA)
+        cb_max, _    = _block_max_min(cb, "Effective tension", period,
+                                      oe=OrcFxAPI.oeEndA)
+        metrics["heave_bmax"].append(h_max)
+        metrics["heave_bmin"].append(h_min)
+        metrics["moor_bmax"].append(mo_max)
+        metrics["cable_bmax"].append(cb_max)
+
+        print(f"  seed {idx+1}/{n_seeds}: "
               f"heave_max_MPM={r_h['upper'][0]:5.2f} m  "
               f"moor_max_MPM={r_m['upper'][0]:7.1f} kN  "
-              f"cable_max_MPM={r_c['upper'][0]:6.1f} kN")
+              f"cable_max_MPM={r_c['upper'][0]:6.1f} kN  | "
+              f"block-max: heave={h_max:5.2f} m  moor={mo_max:7.1f} kN  "
+              f"cable={cb_max:6.1f} kN")
 
     def _stats(arr):
         a = np.asarray(arr)
         return a.mean(), a.std(), a.max()
 
-    print("\n  Summary across seeds  (mean ± std, worst):")
+    print("\n  Rayleigh MPM summary across seeds  (mean ± std, worst):")
     h_up = _stats(metrics["heave_mpm_up"])
     h_lo = _stats(metrics["heave_mpm_lo"])
     m_mp = _stats(metrics["moor_mpm"])
@@ -335,6 +401,36 @@ def _aggregate_extremes(sim_paths, cfg):
     print(f"    Export cable tension at End A:")
     print(f"      MPM max          : {c_mp[0]:7.1f} ± {c_mp[1]:.1f} kN  (worst {c_mp[2]:.1f} kN)")
     print(f"      {risk_pct}% risk max     : {c_rk[0]:7.1f} ± {c_rk[1]:.1f} kN  (worst {c_rk[2]:.1f} kN)")
+
+    # ── Gumbel block-max across seeds ─────────────────────────────────────
+    if n_seeds >= 2:
+        print("\n  Gumbel block-max across seeds  (3 h max distribution):")
+        if n_seeds < 6:
+            print(f"    NOTE: n_seeds = {n_seeds} < 6; Gumbel fit has wide "
+                  f"confidence interval. DNV-RP-F205 / OS-E301 recommend "
+                  f"N ≥ 6 (10–20 preferred).")
+
+        def _gumbel_line(label, samples, unit, mbl=None, tail="upper"):
+            x = np.asarray(samples, dtype=float)
+            if tail == "lower":
+                # Fit Gumbel-min via Gumbel-max of negated samples
+                mu_n, beta = _gumbel_fit(-x)
+                p50 = -_gumbel_quantile(mu_n, beta, 0.50)
+                p90 = -_gumbel_quantile(mu_n, beta, 0.10)   # lower-tail 90% CI
+                mode = -mu_n
+            else:
+                mu, beta = _gumbel_fit(x)
+                p50  = _gumbel_quantile(mu, beta, 0.50)
+                p90  = _gumbel_quantile(mu, beta, 0.90)
+                mode = mu
+            extra = f"  (P90 = {100*p90/mbl:.1f}% MBL)" if mbl else ""
+            print(f"    {label:<48s}"
+                  f" mode={mode:7.2f}  P50={p50:7.2f}  P90={p90:7.2f} {unit}{extra}")
+
+        _gumbel_line("Platform heave (max)",            metrics["heave_bmax"], "m")
+        _gumbel_line("Platform heave (min, lower tail)", metrics["heave_bmin"], "m", tail="lower")
+        _gumbel_line(f"{most_loaded_name} tension @End A", metrics["moor_bmax"], "kN", mbl=mooring_mbl)
+        _gumbel_line("ExportCable tension @End A",       metrics["cable_bmax"], "kN")
 
     print(f"\n{SEP}\nPost-processing complete.\n{SEP}")
 

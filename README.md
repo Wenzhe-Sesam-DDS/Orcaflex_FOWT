@@ -67,12 +67,20 @@ run them sequentially from a terminal without the GUI.
 
 Set **Number of Seeds = N** in the sidebar (or `n_seeds` in the params
 dict). The runner executes N independent simulations using
-`WaveSeed = base_seed + i`, then `post_process` fits a Rayleigh tail per
-seed and reports the **mean ± std + worst** of each MPM / risk-factor
-estimate. Plots are drawn from seed 0.
+`WaveSeed = base_seed + i`, and `post_process` reports **two
+complementary** extreme-value methods per seed-aggregated response:
 
-For stable extreme-value estimates: **N ≥ 3** is recommended; **N ≥ 5**
-for design-grade ULS reports.
+1. **Rayleigh MPM (per seed, then averaged)** — fits Rayleigh to all
+   peaks of each 3 h time history, gives the *mode* of the 3 h max
+   distribution. Best for narrow-band, near-Gaussian responses (platform
+   heave). Reported as **mean ± std (worst)** across seeds.
+2. **Gumbel block-max (across seeds)** — fits Gumbel/EVI to the N true
+   3 h maxima (one per seed), reports **mode / P50 / P90** of the 3 h
+   max distribution. Required for non-Gaussian responses (mooring and
+   cable tension). Recommended by DNV-RP-F205 / DNVGL-OS-E301.
+
+Recommended seed counts: **N ≥ 3** for screening; **N ≥ 6** for Gumbel
+fit stability; **N = 10–20** for design-grade ULS reports.
 
 ---
 
