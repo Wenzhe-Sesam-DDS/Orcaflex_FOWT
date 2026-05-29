@@ -140,10 +140,11 @@ with st.sidebar:
 
     with st.expander("🎲 Random Seeds"):
         wave_seed = st.number_input("Base Wave Seed",     value=int(D["wave_seed"]), min_value=1, max_value=10**9, step=1)
-        n_seeds   = st.number_input("Number of Seeds",    value=int(D["n_seeds"]),   min_value=1, max_value=10,    step=1,
+        n_seeds   = st.number_input("Number of Seeds",    value=int(D["n_seeds"]),   min_value=1, max_value=50,    step=1,
                                     help="Run N independent simulations (seed_i = base + i). "
                                          "Extreme stats are aggregated; plots use seed 0. "
-                                         "N ≥ 3 recommended for stable MPM estimates.")
+                                         "N ≥ 3 for screening, N ≥ 6 for Gumbel fit stability, "
+                                         "N = 10–20 for design-grade ULS reports (DNV-RP-F205).")
 
     with st.expander("📈 Post-Processing"):
         storm_hours = st.number_input("Storm Duration (h) — extreme stats", value=int(D["storm_hours"]), min_value=1, max_value=24,  step=1)
