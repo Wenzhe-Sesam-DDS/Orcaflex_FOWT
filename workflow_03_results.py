@@ -17,6 +17,11 @@ Sections
   7. Extreme statistics         (per-seed Rayleigh MPM + risk-factor extremes;
                                  cross-seed Gumbel block-max P50/P90 when
                                  n_seeds >= 2 — DNV-RP-F205 / OS-E301)
+  8. Design checks              (mode-dependent acceptance)
+                                 • inplace    — DNVGL-OS-E301 / RP-F205 (γ_mean,
+                                   γ_dyn) with characteristic load = T_P90
+                                 • marine_ops — DNV-ST-N001 / RP-H103 with
+                                   α-factor and γ_F = 1.30
 
 Public API
   post_process(sim_paths, params, out_dir) -> dict
@@ -432,7 +437,96 @@ def _aggregate_extremes(sim_paths, cfg):
         _gumbel_line(f"{most_loaded_name} tension @End A", metrics["moor_bmax"], "kN", mbl=mooring_mbl)
         _gumbel_line("ExportCable tension @End A",       metrics["cable_bmax"], "kN")
 
+    _design_checks(metrics, most_loaded_name, cfg)
+
     print(f"\n{SEP}\nPost-processing complete.\n{SEP}")
+
+
+# ════════════════════════════════════════════════════════════════════════════════════════════
+# Section 8 — Design checks (mode-dependent)
+# ════════════════════════════════════════════════════════════════════════════════════════════
+def _design_checks(metrics, most_loaded_name, cfg):
+    """Mode-dependent acceptance check using the cross-seed Gumbel fit.
+
+    inplace    : DNVGL-OS-E301 / DNV-RP-F205 / DNV-RP-0360 — permanent station.
+                 Characteristic tension = P90 of 3 h max distribution.
+                 ULS utilisation:  U = (γ_mean·T_mean + γ_dyn·T_dyn) / MBL
+                 with γ_mean = 1.40, γ_dyn = 1.70 (consequence class 1).
+
+    marine_ops : DNV-ST-N001 / DNV-RP-H103 — temporary marine operation.
+                 Characteristic tension = P50 of 3 h max scaled by 1/α-factor.
+                 ULS utilisation:  U = γ_F · (T_P50 / α) / MBL,  γ_F = 1.30.
+                 α from ST-N001 Table 4-3 (depends on T_pop and OPWF quality).
+    """
+    n_seeds  = len(metrics["moor_bmax"])
+    if n_seeds < 2:
+        return  # need a Gumbel fit
+
+    mode = cfg["analysis_mode"]
+    mbl  = cfg["mooring_mbl"]
+    SEP  = "=" * 65
+
+    # Re-fit once (cheap) so the section is self-contained.
+    mu_m, beta_m  = _gumbel_fit(metrics["moor_bmax"])
+    mu_c, beta_c  = _gumbel_fit(metrics["cable_bmax"])
+    moor_p50 = _gumbel_quantile(mu_m, beta_m, 0.50)
+    moor_p90 = _gumbel_quantile(mu_m, beta_m, 0.90)
+    cable_p50 = _gumbel_quantile(mu_c, beta_c, 0.50)
+    cable_p90 = _gumbel_quantile(mu_c, beta_c, 0.90)
+
+    moor_mean = float(np.mean(metrics["moor_bmax"]))
+    cable_mean = float(np.mean(metrics["cable_bmax"]))
+
+    if mode == "marine_ops":
+        alpha = cfg["alpha_factor"]
+        t_pop = cfg["t_pop_hours"]
+        gamma_f = 1.30
+        print(f"\n{SEP}\nSECTION 8 — Design Checks  [MARINE OPERATIONS — "
+              f"DNV-ST-N001 / RP-H103]\n{SEP}")
+        print(f"  Planned operation duration  T_pop = {t_pop:.1f} h")
+        print(f"  Weather-window α-factor          = {alpha:.2f}  "
+              f"(ST-N001 Table 4-3)")
+        print(f"  Load partial factor               γ_F = {gamma_f:.2f}")
+        print(f"  Characteristic load               T_c = P50 / α")
+        print()
+        print(f"  {most_loaded_name} tension @ End A:")
+        T_c = moor_p50 / alpha
+        U   = gamma_f * T_c / mbl
+        flag = "FAIL ✗" if U > 1.0 else "PASS ✓"
+        print(f"    T_P50      = {moor_p50:7.1f} kN")
+        print(f"    T_c = P50/α = {T_c:7.1f} kN")
+        print(f"    Utilisation = γ_F·T_c / MBL = {U:6.3f}  [{flag}]")
+        print()
+        print(f"  ExportCable tension @ End A:")
+        print(f"    T_P50      = {cable_p50:7.1f} kN   (T_P50/α = "
+              f"{cable_p50/alpha:7.1f} kN)")
+    else:
+        gamma_mean, gamma_dyn = 1.40, 1.70
+        print(f"\n{SEP}\nSECTION 8 — Design Checks  [IN-PLACE — "
+              f"DNVGL-OS-E301 / DNV-RP-F205]\n{SEP}")
+        print(f"  Consequence class 1 partial factors: "
+              f"γ_mean = {gamma_mean:.2f}, γ_dyn = {gamma_dyn:.2f}")
+        print(f"  Characteristic load                T_c = P90 of 3 h max")
+        print()
+        print(f"  {most_loaded_name} tension @ End A:")
+        T_mean = moor_mean
+        T_dyn  = max(0.0, moor_p90 - moor_mean)
+        T_d    = gamma_mean * T_mean + gamma_dyn * T_dyn
+        U      = T_d / mbl
+        flag   = "FAIL ✗" if U > 1.0 else "PASS ✓"
+        print(f"    T_mean     = {T_mean:7.1f} kN")
+        print(f"    T_P90      = {moor_p90:7.1f} kN")
+        print(f"    T_dyn      = P90 - mean = {T_dyn:7.1f} kN")
+        print(f"    T_d = γ_mean·T_mean + γ_dyn·T_dyn = {T_d:7.1f} kN")
+        print(f"    Utilisation = T_d / MBL = {U:6.3f}  [{flag}]")
+        print()
+        print(f"  ExportCable tension @ End A:")
+        T_mean_c = cable_mean
+        T_dyn_c  = max(0.0, cable_p90 - cable_mean)
+        T_d_c    = gamma_mean * T_mean_c + gamma_dyn * T_dyn_c
+        print(f"    T_P90 = {cable_p90:7.1f} kN   "
+              f"T_d = {T_d_c:7.1f} kN  (compare with cable Te capacity "
+              f"per DNV-RP-0360)")
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -538,11 +632,14 @@ def post_process(sim_paths, params: dict, out_dir: str) -> dict:
         sim_paths = [sim_paths]
     p = params_with_defaults(params)
     cfg = {
-        "period":      int(p["period"]),
-        "mooring_mbl": float(p["mooring_mbl"]),
-        "cable_mbr":   float(p["cable_mbr"]),
-        "storm_hours": int(p["storm_hours"]),
-        "risk_pct":    int(p["risk_pct"]),
+        "period":         int(p["period"]),
+        "mooring_mbl":    float(p["mooring_mbl"]),
+        "cable_mbr":      float(p["cable_mbr"]),
+        "storm_hours":    int(p["storm_hours"]),
+        "risk_pct":       int(p["risk_pct"]),
+        "analysis_mode":  str(p["analysis_mode"]).lower(),
+        "alpha_factor":   float(p["alpha_factor"]),
+        "t_pop_hours":    float(p["t_pop_hours"]),
     }
 
     os.makedirs(out_dir, exist_ok=True)

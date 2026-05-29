@@ -150,6 +150,30 @@ with st.sidebar:
         risk_pct    = st.number_input("Risk Factor (%) — extreme query",    value=int(D["risk_pct"]),    min_value=1, max_value=50,  step=1)
         period      = st.selectbox("Analysis Period (stage)", options=[0, 1], index=int(D["period"]),
                                    format_func=lambda i: f"Stage {i} ({'build-up' if i == 0 else 'analysis'})")
+        analysis_mode = st.selectbox(
+            "Design-Check Mode",
+            options=["inplace", "marine_ops"],
+            index=0 if D["analysis_mode"] == "inplace" else 1,
+            format_func=lambda m: (
+                "In-place  — DNVGL-OS-E301 / RP-F205 (P90, γ_mean / γ_dyn)"
+                if m == "inplace"
+                else "Marine Ops — DNV-ST-N001 / RP-H103 (P50/α, γ_F = 1.30)"
+            ),
+            help=("In-place: permanent FOWT, characteristic load = T_P90 with "
+                  "γ_mean = 1.40, γ_dyn = 1.70. "
+                  "Marine Ops: temporary phase, characteristic load = T_P50 / α "
+                  "with γ_F = 1.30 and weather-window α-factor."),
+        )
+        if analysis_mode == "marine_ops":
+            alpha_factor = st.number_input("α-factor (ST-N001 Table 4-3)",
+                                           value=float(D["alpha_factor"]),
+                                           min_value=0.50, max_value=1.00, step=0.05)
+            t_pop_hours  = st.number_input("Planned operation T_pop (h)",
+                                           value=float(D["t_pop_hours"]),
+                                           min_value=1.0, max_value=240.0, step=1.0)
+        else:
+            alpha_factor = float(D["alpha_factor"])
+            t_pop_hours  = float(D["t_pop_hours"])
 
     st.divider()
     st.markdown("**Run pipeline step-by-step**")
@@ -305,6 +329,9 @@ def _collect_params() -> dict:
         buildup_duration=buildup_duration, analysis_duration=analysis_duration,
         storm_hours=storm_hours, risk_pct=risk_pct, period=period,
         wave_seed=int(wave_seed), n_seeds=int(n_seeds),
+        analysis_mode=analysis_mode,
+        alpha_factor=float(alpha_factor),
+        t_pop_hours=float(t_pop_hours),
     )
 
 

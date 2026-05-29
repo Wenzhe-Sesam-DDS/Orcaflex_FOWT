@@ -90,6 +90,17 @@ GUI_DEFAULTS = {
     "risk_pct":                 5,      # %   risk factor for extreme value query
     "period":                   1,      # analysis stage (0 = build-up, 1 = analysis)
 
+    # Design-check mode for post-processing
+    #   "inplace"     — permanent FOWT, DNVGL-OS-E301 / DNV-RP-F205 / DNV-RP-0360
+    #                   characteristic load = P90 of 3 h max; ULS partial factors
+    #                   γ_mean = 1.40, γ_dyn = 1.70 (consequence class 1).
+    #   "marine_ops"  — temporary phase, DNV-ST-N001 / DNV-RP-H103
+    #                   characteristic load = P50 of 3 h max scaled by α-factor,
+    #                   ULS γ_F = 1.30; weather-window α from ST-N001 Table 4-3.
+    "analysis_mode":           "inplace",
+    "alpha_factor":             0.85,   # ST-N001 α-factor (T_pop ≤ 12 h, OPWF good)
+    "t_pop_hours":              12,     # planned operation duration (informational)
+
     # Random seeds (multi-seed runs aggregate extreme stats across all seeds)
     "wave_seed":                314159, # base WaveSeed; subsequent seeds = base + i
     "n_seeds":                  1,      # number of seeds to run (>= 1)
