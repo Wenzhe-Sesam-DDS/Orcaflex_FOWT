@@ -478,33 +478,58 @@ def _design_checks(metrics, most_loaded_name, cfg):
     cable_mean = float(np.mean(metrics["cable_bmax"]))
 
     if mode == "marine_ops":
-        alpha = cfg["alpha_factor"]
-        t_pop = cfg["t_pop_hours"]
-        gamma_f = 1.30
+        weather  = cfg["mo_weather_mode"]
+        gamma_f  = cfg["mo_gamma_f"]
         print(f"\n{SEP}\nSECTION 8 — Design Checks  [MARINE OPERATIONS — "
               f"DNV-ST-N001 / RP-H103]\n{SEP}")
-        print(f"  Planned operation duration  T_pop = {t_pop:.1f} h")
-        print(f"  Weather-window α-factor          = {alpha:.2f}  "
-              f"(ST-N001 Table 4-3)")
+        print(f"  Weather mode                      : {weather}")
         print(f"  Load partial factor               γ_F = {gamma_f:.2f}")
-        print(f"  Characteristic load               T_c = P50 / α")
-        print()
-        print(f"  {most_loaded_name} tension @ End A:")
-        T_c = moor_p50 / alpha
-        U   = gamma_f * T_c / mbl
-        flag = "FAIL ✗" if U > 1.0 else "PASS ✓"
-        print(f"    T_P50      = {moor_p50:7.1f} kN")
-        print(f"    T_c = P50/α = {T_c:7.1f} kN")
-        print(f"    Utilisation = γ_F·T_c / MBL = {U:6.3f}  [{flag}]")
-        print()
-        print(f"  ExportCable tension @ End A:")
-        print(f"    T_P50      = {cable_p50:7.1f} kN   (T_P50/α = "
-              f"{cable_p50/alpha:7.1f} kN)")
+
+        if weather == "unconstrained":
+            rp = cfg["mo_return_period_years"]
+            print(f"  Design extreme return period      : {rp} yr  "
+                  f"(N-year sea state, no α-factor)")
+            print(f"  Characteristic load               T_c = P90 of 3 h max")
+            print()
+            print(f"  {most_loaded_name} tension @ End A:")
+            T_c = moor_p90
+            U   = gamma_f * T_c / mbl
+            flag = "FAIL ✗" if U > 1.0 else "PASS ✓"
+            print(f"    T_P90      = {moor_p90:7.1f} kN")
+            print(f"    Utilisation = γ_F·T_P90 / MBL = {U:6.3f}  [{flag}]")
+            print()
+            print(f"  ExportCable tension @ End A:")
+            print(f"    T_P90      = {cable_p90:7.1f} kN   "
+                  f"(γ_F·T_P90 = {gamma_f*cable_p90:7.1f} kN)")
+            print(f"\n  NOTE: ensure the simulated sea state corresponds to the "
+                  f"{rp}-yr return period (ST-N001 §3.3, RP-H103 §3).")
+        else:  # constrained
+            alpha = cfg["alpha_factor"]
+            t_pop = cfg["t_pop_hours"]
+            print(f"  Planned operation duration  T_pop = {t_pop:.1f} h")
+            print(f"  Weather-window α-factor          = {alpha:.2f}  "
+                  f"(ST-N001 Table 4-3)")
+            print(f"  Characteristic load               T_c = P50 / α")
+            print()
+            print(f"  {most_loaded_name} tension @ End A:")
+            T_c = moor_p50 / alpha
+            U   = gamma_f * T_c / mbl
+            flag = "FAIL ✗" if U > 1.0 else "PASS ✓"
+            print(f"    T_P50      = {moor_p50:7.1f} kN")
+            print(f"    T_c = P50/α = {T_c:7.1f} kN")
+            print(f"    Utilisation = γ_F·T_c / MBL = {U:6.3f}  [{flag}]")
+            print()
+            print(f"  ExportCable tension @ End A:")
+            print(f"    T_P50      = {cable_p50:7.1f} kN   (T_P50/α = "
+                  f"{cable_p50/alpha:7.1f} kN)")
     else:
-        gamma_mean, gamma_dyn = 1.40, 1.70
+        cclass = cfg["inplace_consequence_class"]
+        gamma_mean = cfg["inplace_gamma_mean"]
+        gamma_dyn  = cfg["inplace_gamma_dyn"]
         print(f"\n{SEP}\nSECTION 8 — Design Checks  [IN-PLACE — "
               f"DNVGL-OS-E301 / DNV-RP-F205]\n{SEP}")
-        print(f"  Consequence class 1 partial factors: "
+        print(f"  Consequence class                  : {cclass}")
+        print(f"  Partial factors                    : "
               f"γ_mean = {gamma_mean:.2f}, γ_dyn = {gamma_dyn:.2f}")
         print(f"  Characteristic load                T_c = P90 of 3 h max")
         print()
@@ -638,8 +663,16 @@ def post_process(sim_paths, params: dict, out_dir: str) -> dict:
         "storm_hours":    int(p["storm_hours"]),
         "risk_pct":       int(p["risk_pct"]),
         "analysis_mode":  str(p["analysis_mode"]).lower(),
-        "alpha_factor":   float(p["alpha_factor"]),
-        "t_pop_hours":    float(p["t_pop_hours"]),
+        # in-place partial factors
+        "inplace_consequence_class": str(p["inplace_consequence_class"]).lower(),
+        "inplace_gamma_mean":        float(p["inplace_gamma_mean"]),
+        "inplace_gamma_dyn":         float(p["inplace_gamma_dyn"]),
+        # marine operations
+        "mo_weather_mode":       str(p["mo_weather_mode"]).lower(),
+        "mo_gamma_f":            float(p["mo_gamma_f"]),
+        "alpha_factor":          float(p["alpha_factor"]),
+        "t_pop_hours":           float(p["t_pop_hours"]),
+        "mo_return_period_years": int(p["mo_return_period_years"]),
     }
 
     os.makedirs(out_dir, exist_ok=True)

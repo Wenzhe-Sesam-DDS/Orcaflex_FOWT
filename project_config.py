@@ -93,13 +93,35 @@ GUI_DEFAULTS = {
     # Design-check mode for post-processing
     #   "inplace"     — permanent FOWT, DNVGL-OS-E301 / DNV-RP-F205 / DNV-RP-0360
     #                   characteristic load = P90 of 3 h max; ULS partial factors
-    #                   γ_mean = 1.40, γ_dyn = 1.70 (consequence class 1).
+    #                   depend on consequence class (Table 2-3).
     #   "marine_ops"  — temporary phase, DNV-ST-N001 / DNV-RP-H103
-    #                   characteristic load = P50 of 3 h max scaled by α-factor,
-    #                   ULS γ_F = 1.30; weather-window α from ST-N001 Table 4-3.
+    #                   sub-modes:
+    #                     "constrained"   — weather-window operation (T_pop ≤
+    #                                       reference period), design sea state
+    #                                       from forecast, characteristic load
+    #                                       = T_P50 / α-factor, γ_F = 1.30.
+    #                     "unconstrained" — weather-unrestricted operation,
+    #                                       design sea state = N-year extreme
+    #                                       (typically 1 yr seasonal or 10 yr
+    #                                       for T_pop > 72 h); no α-factor,
+    #                                       characteristic load = T_P90, γ_F = 1.30.
     "analysis_mode":           "inplace",
-    "alpha_factor":             0.85,   # ST-N001 α-factor (T_pop ≤ 12 h, OPWF good)
-    "t_pop_hours":              12,     # planned operation duration (informational)
+
+    # In-place — DNVGL-OS-E301 Table 2-3 consequence class
+    #   "class1" → γ_mean = 1.40, γ_dyn = 1.70 (failure does NOT lead to
+    #              unacceptable consequences)
+    #   "class2" → γ_mean = 1.75, γ_dyn = 2.20 (failure may lead to unacceptable
+    #              consequences — e.g. close to other infrastructure)
+    "inplace_consequence_class": "class1",
+    "inplace_gamma_mean":         1.40,
+    "inplace_gamma_dyn":          1.70,
+
+    # Marine operations — DNV-ST-N001
+    "mo_weather_mode":          "constrained",
+    "mo_gamma_f":                1.30,    # ST-N001 load factor (ULS)
+    "alpha_factor":              0.85,    # constrained: ST-N001 Table 4-3
+    "t_pop_hours":              12.0,    # planned operation duration
+    "mo_return_period_years":   10,      # unconstrained: design extreme RP
 
     # Random seeds (multi-seed runs aggregate extreme stats across all seeds)
     "wave_seed":                314159, # base WaveSeed; subsequent seeds = base + i

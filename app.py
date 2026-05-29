@@ -157,23 +157,79 @@ with st.sidebar:
             format_func=lambda m: (
                 "In-place  — DNVGL-OS-E301 / RP-F205 (P90, γ_mean / γ_dyn)"
                 if m == "inplace"
-                else "Marine Ops — DNV-ST-N001 / RP-H103 (P50/α, γ_F = 1.30)"
+                else "Marine Ops — DNV-ST-N001 / RP-H103 (P50/α or P90, γ_F = 1.30)"
             ),
-            help=("In-place: permanent FOWT, characteristic load = T_P90 with "
-                  "γ_mean = 1.40, γ_dyn = 1.70. "
-                  "Marine Ops: temporary phase, characteristic load = T_P50 / α "
-                  "with γ_F = 1.30 and weather-window α-factor."),
+            help=("In-place: permanent FOWT, characteristic load = T_P90. "
+                  "Marine Ops: temporary phase; constrained = T_P50/α from "
+                  "forecast, unconstrained = T_P90 from N-yr extreme sea state."),
         )
-        if analysis_mode == "marine_ops":
-            alpha_factor = st.number_input("α-factor (ST-N001 Table 4-3)",
-                                           value=float(D["alpha_factor"]),
-                                           min_value=0.50, max_value=1.00, step=0.05)
-            t_pop_hours  = st.number_input("Planned operation T_pop (h)",
-                                           value=float(D["t_pop_hours"]),
-                                           min_value=1.0, max_value=240.0, step=1.0)
+
+        # ── Mode-specific partial factors ─────────────────────────────────
+        if analysis_mode == "inplace":
+            cclass = st.selectbox(
+                "Consequence Class (OS-E301 Table 2-3)",
+                options=["class1", "class2"],
+                index=0 if D["inplace_consequence_class"] == "class1" else 1,
+                format_func=lambda c: (
+                    "Class 1 — γ_mean = 1.40, γ_dyn = 1.70"
+                    if c == "class1"
+                    else "Class 2 — γ_mean = 1.75, γ_dyn = 2.20"
+                ),
+            )
+            _defaults = {"class1": (1.40, 1.70), "class2": (1.75, 2.20)}
+            _gm_d, _gd_d = _defaults[cclass]
+            inplace_gamma_mean = st.number_input("γ_mean (override)", value=_gm_d,
+                                                 min_value=1.00, max_value=3.00, step=0.05)
+            inplace_gamma_dyn  = st.number_input("γ_dyn  (override)", value=_gd_d,
+                                                 min_value=1.00, max_value=3.00, step=0.05)
+            inplace_consequence_class = cclass
+            # marine-ops fields keep defaults so cfg is always complete
+            mo_weather_mode        = D["mo_weather_mode"]
+            mo_gamma_f             = float(D["mo_gamma_f"])
+            alpha_factor           = float(D["alpha_factor"])
+            t_pop_hours            = float(D["t_pop_hours"])
+            mo_return_period_years = int(D["mo_return_period_years"])
         else:
-            alpha_factor = float(D["alpha_factor"])
-            t_pop_hours  = float(D["t_pop_hours"])
+            mo_weather_mode = st.selectbox(
+                "Weather Mode (ST-N001 §3.3)",
+                options=["constrained", "unconstrained"],
+                index=0 if D["mo_weather_mode"] == "constrained" else 1,
+                format_func=lambda w: (
+                    "Weather-constrained — forecast + α-factor (T_pop ≤ ref. period)"
+                    if w == "constrained"
+                    else "Weather-unconstrained — N-yr extreme sea state, no α"
+                ),
+                help=("Constrained: short ops planned to a weather window; "
+                      "α-factor down-scales the forecast Hs. "
+                      "Unconstrained: long ops (typically T_pop > 72 h) "
+                      "designed for the N-year return-period sea state."),
+            )
+            mo_gamma_f = st.number_input("γ_F (ST-N001 load factor)",
+                                         value=float(D["mo_gamma_f"]),
+                                         min_value=1.00, max_value=2.00, step=0.05)
+            if mo_weather_mode == "constrained":
+                alpha_factor = st.number_input("α-factor (ST-N001 Table 4-3)",
+                                               value=float(D["alpha_factor"]),
+                                               min_value=0.50, max_value=1.00, step=0.05)
+                t_pop_hours  = st.number_input("Planned operation T_pop (h)",
+                                               value=float(D["t_pop_hours"]),
+                                               min_value=1.0, max_value=240.0, step=1.0)
+                mo_return_period_years = int(D["mo_return_period_years"])
+            else:
+                mo_return_period_years = st.selectbox(
+                    "Design return period (yr)",
+                    options=[1, 10, 100],
+                    index=[1, 10, 100].index(int(D["mo_return_period_years"]))
+                          if int(D["mo_return_period_years"]) in (1, 10, 100) else 1,
+                    help=("1 yr seasonal: T_pop ≤ 72 h unconstrained. "
+                          "10 yr: longer ops. 100 yr: in-place-equivalent."),
+                )
+                alpha_factor = float(D["alpha_factor"])
+                t_pop_hours  = float(D["t_pop_hours"])
+            # in-place fields keep defaults so cfg is always complete
+            inplace_consequence_class = D["inplace_consequence_class"]
+            inplace_gamma_mean        = float(D["inplace_gamma_mean"])
+            inplace_gamma_dyn         = float(D["inplace_gamma_dyn"])
 
     st.divider()
     st.markdown("**Run pipeline step-by-step**")
@@ -330,8 +386,14 @@ def _collect_params() -> dict:
         storm_hours=storm_hours, risk_pct=risk_pct, period=period,
         wave_seed=int(wave_seed), n_seeds=int(n_seeds),
         analysis_mode=analysis_mode,
+        inplace_consequence_class=inplace_consequence_class,
+        inplace_gamma_mean=float(inplace_gamma_mean),
+        inplace_gamma_dyn=float(inplace_gamma_dyn),
+        mo_weather_mode=mo_weather_mode,
+        mo_gamma_f=float(mo_gamma_f),
         alpha_factor=float(alpha_factor),
         t_pop_hours=float(t_pop_hours),
+        mo_return_period_years=int(mo_return_period_years),
     )
 
 
