@@ -27,8 +27,22 @@ pip install streamlit numpy matplotlib pytest
 streamlit run app.py
 ```
 
-Open the URL Streamlit prints, set parameters in the sidebar, and click
-**▶ Run Analysis**.
+Open the URL Streamlit prints and set parameters in the sidebar. The
+pipeline is now exposed as **three separate buttons** so you can stop and
+inspect intermediate state, or run the whole chain in one click:
+
+| Button | Action | Enabled when |
+|---|---|---|
+| **1️⃣ Build Model** | Calls `build(params)`; validates inputs first | Always |
+| **2️⃣ Run Simulations** | Calls `run(params, model=…)` for all N seeds | Step 1 done |
+| **3️⃣ Post-process** | Calls `post_process(sim_paths, params)`; writes report + figures | Step 2 done |
+| **▶ Run All (1 → 2 → 3)** | Runs the full pipeline sequentially in one click | Always |
+| **🔄 Reset Pipeline** | Clears in-memory model / sim handles so you can start over | Always |
+
+A cache short-circuit applies to **Build Model** and **Run All**: if
+`runs/<hash>/` already contains all expected artefacts for the current
+parameter set, all three steps are marked complete instantly and the
+existing results are shown.
 
 ---
 
