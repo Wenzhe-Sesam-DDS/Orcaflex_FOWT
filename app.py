@@ -152,7 +152,15 @@ with st.sidebar:
                                    format_func=lambda i: f"Stage {i} ({'build-up' if i == 0 else 'analysis'})")
 
     st.divider()
-    run_btn = st.button("▶  Run Analysis", type="primary", use_container_width=True)
+    st.markdown("**Run pipeline step-by-step**")
+    _step1_done = st.session_state.get("step1_done", False)
+    _step2_done = st.session_state.get("step2_done", False)
+    build_btn = st.button("1️⃣  Build Model",        type="primary",   use_container_width=True)
+    run_btn   = st.button("2️⃣  Run Simulations",    type="primary",   use_container_width=True, disabled=not _step1_done)
+    post_btn  = st.button("3️⃣  Post-process",       type="primary",   use_container_width=True, disabled=not _step2_done)
+    st.markdown("**— or —**")
+    all_btn   = st.button("▶  Run All (1 → 2 → 3)", type="primary",   use_container_width=True)
+    reset_btn = st.button("🔄  Reset Pipeline",                          use_container_width=True)
 
 
 # ═════════════════════════════════════════════════════════════════════════════
@@ -226,62 +234,56 @@ def validate(params: dict) -> tuple[list[str], list[str]]:
 
 
 # ═════════════════════════════════════════════════════════════════════════════
-# RUNNER
+# RUNNER — one function per pipeline step
 # ═════════════════════════════════════════════════════════════════════════════
-def execute(params: dict, status, progress_bar, log_box):
-    """Run the full pipeline. Streams stdout incrementally to log_box."""
-    cache_id = params_hash(params)
-    out_dir  = os.path.join(RUNS_DIR, cache_id)
+def _expected_outputs(out_dir: str) -> list[str]:
+    return [os.path.join(out_dir, f) for f in (
+        "results_report.txt",
+        "fig1_platform_motions.png",
+        "fig2_mooring_tension.png",
+        "fig3_cable_tension_curvature.png",
+    )]
 
-    expected = ["results_report.txt",
-                "fig1_platform_motions.png",
-                "fig2_mooring_tension.png",
-                "fig3_cable_tension_curvature.png"]
-    if all(os.path.exists(os.path.join(out_dir, f)) for f in expected):
-        status.write(f"♻️  Cache hit — reusing `runs/{cache_id}/`")
-        progress_bar.progress(100, text="Done (cached)")
-        return out_dir, f"Cache hit: runs/{cache_id}/\n"
 
-    os.makedirs(out_dir, exist_ok=True)
+def step_build(params: dict, out_dir: str, log_box):
+    """Step 1 — build OrcaFlex model. Returns (model, log)."""
     buf = io.StringIO()
-
-    def _flush_log():
-        log_box.code(buf.getvalue() or "(no output yet)", language="bash")
-
     with redirect_stdout(buf):
-        # Step 1
-        status.write("Step 1/3 — Building model…")
-        progress_bar.progress(10, text="Step 1/3 — Building model…")
         model = build(params)
-        _flush_log()
+    log_box.code(buf.getvalue() or "(no output)", language="bash")
+    return model, buf.getvalue()
 
-        # Step 2
-        n = int(params["n_seeds"])
-        status.write(f"Step 2/3 — Running {n} simulation(s)…")
-        progress_bar.progress(35, text=f"Step 2/3 — Running {n} simulation(s)…")
+
+def step_run(params: dict, model, out_dir: str, log_box):
+    """Step 2 — static + dynamic simulations. Returns (sim_paths, log)."""
+    buf = io.StringIO()
+    with redirect_stdout(buf):
         sim_paths = run_sims(params, out_dir=out_dir, model=model)
-        _flush_log()
+    log_box.code(buf.getvalue() or "(no output)", language="bash")
+    return sim_paths, buf.getvalue()
 
-        # Step 3
-        status.write("Step 3/3 — Post-processing…")
-        progress_bar.progress(80, text="Step 3/3 — Post-processing…")
+
+def step_post(params: dict, sim_paths, out_dir: str, log_box):
+    """Step 3 — post-processing. Returns log."""
+    buf = io.StringIO()
+    with redirect_stdout(buf):
         post_process(sim_paths, params, out_dir=out_dir)
-        _flush_log()
-
-    progress_bar.progress(100, text="Done!")
-    return out_dir, buf.getvalue()
+    log_box.code(buf.getvalue() or "(no output)", language="bash")
+    return buf.getvalue()
 
 
 # ═════════════════════════════════════════════════════════════════════════════
 # MAIN AREA — run + results
 # ═════════════════════════════════════════════════════════════════════════════
-if "out_dir" not in st.session_state:
-    st.session_state.out_dir = None
-if "analysis_log" not in st.session_state:
-    st.session_state.analysis_log = ""
+for _k, _v in (("out_dir", None), ("analysis_log", ""),
+               ("step1_done", False), ("step2_done", False),
+               ("model", None), ("sim_paths", None), ("params", None)):
+    if _k not in st.session_state:
+        st.session_state[_k] = _v
 
-if run_btn:
-    params = dict(
+
+def _collect_params() -> dict:
+    return dict(
         water_depth=water_depth,
         wave_hs=wave_hs, wave_tp=wave_tp, wave_direction=wave_direction,
         wind_speed=wind_speed, wind_direction=wind_direction,
@@ -305,6 +307,24 @@ if run_btn:
         wave_seed=int(wave_seed), n_seeds=int(n_seeds),
     )
 
+
+def _reset_pipeline():
+    st.session_state.step1_done = False
+    st.session_state.step2_done = False
+    st.session_state.model = None
+    st.session_state.sim_paths = None
+    st.session_state.params = None
+    st.session_state.analysis_log = ""
+
+
+if reset_btn:
+    _reset_pipeline()
+    st.session_state.out_dir = None
+    st.info("Pipeline state cleared. Start again from step 1.", icon="🔄")
+
+# ── STEP 1 — BUILD ───────────────────────────────────────────────────────────
+if build_btn:
+    params = _collect_params()
     errors, warnings = validate(params)
     if errors:
         st.error("Please fix the following input errors before running:")
@@ -314,31 +334,132 @@ if run_btn:
     for w in warnings:
         st.warning(w, icon="⚠️")
 
-    progress_bar = st.empty()
-    progress_bar.progress(0, text="Starting…")
+    cache_id = params_hash(params)
+    out_dir  = os.path.join(RUNS_DIR, cache_id)
+    os.makedirs(out_dir, exist_ok=True)
 
-    with st.status("Running OrcaFlex analysis…", expanded=True) as status:
+    # Cache short-circuit: if every artefact already exists, jump straight to
+    # results without re-running any step.
+    if all(os.path.exists(f) for f in _expected_outputs(out_dir)):
+        st.session_state.params = params
+        st.session_state.out_dir = out_dir
+        st.session_state.step1_done = True
+        st.session_state.step2_done = True
+        st.session_state.analysis_log = f"♻️ Cache hit — reused runs/{cache_id}/\n"
+        st.success(f"♻️ Cache hit — reusing `runs/{cache_id}/`. All three steps "
+                   f"already complete; results shown below.")
+    else:
+        _reset_pipeline()
+        st.session_state.params = params
+        st.session_state.out_dir = out_dir
+        with st.status("Step 1/3 — Building model…", expanded=True) as status:
+            log_box = st.empty()
+            try:
+                model, log = step_build(params, out_dir, log_box)
+                st.session_state.model = model
+                st.session_state.analysis_log = log
+                st.session_state.step1_done = True
+                status.update(label="✅ Step 1/3 — Model built",
+                              state="complete", expanded=False)
+            except Exception as exc:
+                st.session_state.analysis_log = f"ERROR (build): {exc}"
+                status.update(label=f"❌ Step 1/3 failed: {exc}", state="error")
+
+# ── STEP 2 — RUN SIMULATIONS ─────────────────────────────────────────────────
+elif run_btn:
+    if st.session_state.model is None or st.session_state.params is None:
+        st.error("Run step 1 (Build Model) first.")
+        st.stop()
+    params  = st.session_state.params
+    out_dir = st.session_state.out_dir
+    n       = int(params["n_seeds"])
+    with st.status(f"Step 2/3 — Running {n} simulation(s)…", expanded=True) as status:
         log_box = st.empty()
         try:
-            out_dir, log = execute(params, status, progress_bar, log_box)
-            st.session_state.out_dir = out_dir
-            st.session_state.analysis_log = log
-            # Clear the in-progress log; the full log is in the "🖥️ Console
-            # Log" expander below so we don't duplicate it here.
-            log_box.empty()
-            status.update(label="✅ Analysis complete!",
+            sim_paths, log = step_run(params, st.session_state.model, out_dir, log_box)
+            st.session_state.sim_paths = sim_paths
+            st.session_state.analysis_log += log
+            st.session_state.step2_done = True
+            status.update(label="✅ Step 2/3 — Simulations complete",
                           state="complete", expanded=False)
         except Exception as exc:
-            st.session_state.out_dir = None
-            st.session_state.analysis_log = f"ERROR: {exc}"
-            status.update(label=f"❌ Analysis failed: {exc}", state="error")
+            st.session_state.analysis_log += f"\nERROR (run): {exc}"
+            status.update(label=f"❌ Step 2/3 failed: {exc}", state="error")
 
-    progress_bar.empty()
+# ── STEP 3 — POST-PROCESS ────────────────────────────────────────────────────
+elif post_btn:
+    if st.session_state.sim_paths is None or st.session_state.params is None:
+        st.error("Run steps 1 and 2 first.")
+        st.stop()
+    params  = st.session_state.params
+    out_dir = st.session_state.out_dir
+    with st.status("Step 3/3 — Post-processing…", expanded=True) as status:
+        log_box = st.empty()
+        try:
+            log = step_post(params, st.session_state.sim_paths, out_dir, log_box)
+            st.session_state.analysis_log += log
+            status.update(label="✅ Step 3/3 — Post-processing complete",
+                          state="complete", expanded=False)
+        except Exception as exc:
+            st.session_state.analysis_log += f"\nERROR (post): {exc}"
+            status.update(label=f"❌ Step 3/3 failed: {exc}", state="error")
+
+# ── RUN ALL — 1 → 2 → 3 in one click ─────────────────────────────────────────
+elif all_btn:
+    params = _collect_params()
+    errors, warnings = validate(params)
+    if errors:
+        st.error("Please fix the following input errors before running:")
+        for m in errors:
+            st.markdown(f"- {m}")
+        st.stop()
+    for w in warnings:
+        st.warning(w, icon="⚠️")
+
+    cache_id = params_hash(params)
+    out_dir  = os.path.join(RUNS_DIR, cache_id)
+    os.makedirs(out_dir, exist_ok=True)
+
+    if all(os.path.exists(f) for f in _expected_outputs(out_dir)):
+        st.session_state.params = params
+        st.session_state.out_dir = out_dir
+        st.session_state.step1_done = True
+        st.session_state.step2_done = True
+        st.session_state.analysis_log = f"♻️ Cache hit — reused runs/{cache_id}/\n"
+        st.success(f"♻️ Cache hit — reusing `runs/{cache_id}/`. "
+                   f"All three steps already complete; results shown below.")
+    else:
+        _reset_pipeline()
+        st.session_state.params = params
+        st.session_state.out_dir = out_dir
+        n = int(params["n_seeds"])
+        with st.status("Running full pipeline (1 → 2 → 3)…", expanded=True) as status:
+            log_box = st.empty()
+            try:
+                status.write("Step 1/3 — Building model…")
+                model, log1 = step_build(params, out_dir, log_box)
+                st.session_state.model = model
+                st.session_state.step1_done = True
+
+                status.write(f"Step 2/3 — Running {n} simulation(s)…")
+                sim_paths, log2 = step_run(params, model, out_dir, log_box)
+                st.session_state.sim_paths = sim_paths
+                st.session_state.step2_done = True
+
+                status.write("Step 3/3 — Post-processing…")
+                log3 = step_post(params, sim_paths, out_dir, log_box)
+
+                st.session_state.analysis_log = log1 + log2 + log3
+                status.update(label="✅ Pipeline complete (1 → 2 → 3)",
+                              state="complete", expanded=False)
+            except Exception as exc:
+                st.session_state.analysis_log = f"ERROR (run-all): {exc}"
+                status.update(label=f"❌ Pipeline failed: {exc}", state="error")
 
 else:
     if st.session_state.out_dir is None:
         st.info(
-            "👈 Set your parameters in the sidebar, then click **▶ Run Analysis**.",
+            "👈 Set parameters in the sidebar, then run steps **1 → 2 → 3**.",
             icon="ℹ️",
         )
         st.markdown("""
